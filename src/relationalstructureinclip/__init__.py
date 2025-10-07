@@ -1,0 +1,1 @@
+"""Relational Structure in CLIP."""

@@ -1,18 +1,23 @@
 {
-    "name": "Python 3",
+    "name": "Python 3.10 DevContainer",
     "image": "mcr.microsoft.com/devcontainers/python:1-3.10-bookworm",
     "features": {
-        "ghcr.io/devcontainers-extra/features/bash-command:1": {}
+    // Common system utilities (includes sudo, ca-certificates, curl, git)
+    "ghcr.io/devcontainers/features/common-utils:2": {},
+    // Bash command support
+    "ghcr.io/devcontainers-extra/features/bash-command:1": {},
+    // Install Ruff globally
+    "ghcr.io/devcontainers-extra/features/ruff:1": {}
     },
     "containerEnv": {
-        "WANDB_BASE_URL": "http://192.168.1.92:8080"
+    "WANDB_BASE_URL": "http://192.168.1.92:8080"
     },
-    "postCreateCommand": [
-        "apt-get update",
-        "&& apt-get install -y ca-certificates",
-        "&& if [ -f .env ]; then set -a;",
-        "source .env;",
-        "set +a; fi"
+    "mounts": [
+    "source=/data/,target=/data/,type=bind"
     ],
-    "runArgs": ["--network=wandb_dev_network"]
+    "runArgs": [
+    "--network=wandb_dev_network"
+    ],
+    "workspaceFolder": "/workspaces/relational-structure-in-clip",
+    "remoteUser": "vscode"
 }
