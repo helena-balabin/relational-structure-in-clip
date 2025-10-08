@@ -11,6 +11,8 @@
 *.amltmp
 .amlignore
 
+## Specific Folders ##
+/outputs/
 
 ### Python ###
 
