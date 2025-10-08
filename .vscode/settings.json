@@ -1,6 +1,6 @@
 {
     "python.terminal.activateEnvInCurrentTerminal": true,
-    "python.defaultInterpreterPath": "/home/vscode/.cache/pypoetry/virtualenvs/relationalstructureinclip-s0qS0zIS-py3.14",
+    "python.defaultInterpreterPath": "/home/vscode/.cache/pypoetry/virtualenvs/relationalstructureinclip-s0qS0zIS-py3.12",
     "terminal.integrated.profiles.windows": {
         "PowerShell": {
             "source": "PowerShell",
@@ -65,18 +65,19 @@
         79
     ],
     "[python]": {
-        "editor.defaultFormatter": "ms-python.black-formatter",
+        "editor.defaultFormatter": "ms-python.python",
         "editor.formatOnSave": false
     },
+    "python.formatting.provider": "black",
     "[jupyter]": {
         "editor.formatOnSave": false
     },
     "black-formatter.importStrategy": "fromEnvironment",
     "ruff.path": [
-        "/home/vscode/.cache/pypoetry/virtualenvs/relationalstructureinclip-s0qS0zIS-py3.14/bin/ruff"
+        "/home/vscode/.cache/pypoetry/virtualenvs/relationalstructureinclip-s0qS0zIS-py3.12/bin/ruff"
     ],
     "ruff.interpreter": [
-        "/home/vscode/.cache/pypoetry/virtualenvs/relationalstructureinclip-s0qS0zIS-py3.14/bin/python"
+        "/home/vscode/.cache/pypoetry/virtualenvs/relationalstructureinclip-s0qS0zIS-py3.12/bin/python"
     ],
     "editor.bracketPairColorization.enabled": true,
     "editor.guides.bracketPairs": false,
@@ -370,5 +371,8 @@
     "objective-c": "cd $dir && gcc -framework Cocoa $fileName -o $fileNameWithoutExt && $dir$fileNameWithoutExt",
     "php": "php",
     "python": "\"$pythonPath\" $fullFileName"
-}
+},
+"python-envs.defaultEnvManager": "ms-python.python:poetry",
+"python-envs.defaultPackageManager": "ms-python.python:poetry",
+"python-envs.pythonProjects": []
 }

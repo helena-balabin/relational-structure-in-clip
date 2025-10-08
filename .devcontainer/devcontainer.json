@@ -1,6 +1,6 @@
 {
-    "name": "Python 3.13 DevContainer",
-    "image": "mcr.microsoft.com/devcontainers/python:1-3.13-bullseye",
+    "name": "Python 3.12 DevContainer",
+    "image": "mcr.microsoft.com/devcontainers/python:1-3.12-bullseye",
     "features": {
     // Common system utilities (sudo, ca-certificates, curl, git)
     "ghcr.io/devcontainers/features/common-utils:2": {},
