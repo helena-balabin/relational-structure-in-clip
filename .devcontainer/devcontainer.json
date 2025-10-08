@@ -13,7 +13,7 @@
     "WANDB_BASE_URL": "http://192.168.1.92:8080"
     },
     "mounts": [
-    "source=/data/,target=/data/,type=bind"
+    "source=/data/u0150403/,target=/data/,type=bind"
     ],
     "runArgs": [
     "--network=wandb_dev_network"
