@@ -1,6 +1,6 @@
 {
     "python.terminal.activateEnvInCurrentTerminal": true,
-    "python.defaultInterpreterPath": "",
+    "python.defaultInterpreterPath": "/home/vscode/.cache/pypoetry/virtualenvs/relationalstructureinclip-s0qS0zIS-py3.14",
     "terminal.integrated.profiles.windows": {
         "PowerShell": {
             "source": "PowerShell",
@@ -29,7 +29,7 @@
         "Zsh": {
             "path": "/bin/zsh",
             "args": [],
-            "icon": "terminal-zsh"
+            "icon": "terminal-cmd"
         }
 
     },
@@ -42,13 +42,12 @@
         "Zsh": {
             "path": "/bin/zsh",
             "args": [],
-            "icon": "terminal-zsh"
+            "icon": "terminal-cmd"
         }
     },
     "terminal.integrated.defaultProfile.windows": "Git Bash",
     "terminal.integrated.defaultProfile.linux": "Bash",
     "terminal.integrated.defaultProfile.osx": "Zsh",
-    "workbench.colorTheme": "__vs-dark",
     "workbench.iconTheme": "vscode-icons",
     "workbench.productIconTheme": "Default",
     "autoDocstring.docstringFormat": "numpy",
@@ -73,14 +72,11 @@
         "editor.formatOnSave": false
     },
     "black-formatter.importStrategy": "fromEnvironment",
-    "ruff.args": [
-        "--config=pyproject.toml"
-    ],
     "ruff.path": [
-        ""
+        "/home/vscode/.cache/pypoetry/virtualenvs/relationalstructureinclip-s0qS0zIS-py3.14/bin/ruff"
     ],
     "ruff.interpreter": [
-        ""
+        "/home/vscode/.cache/pypoetry/virtualenvs/relationalstructureinclip-s0qS0zIS-py3.14/bin/python"
     ],
     "editor.bracketPairColorization.enabled": true,
     "editor.guides.bracketPairs": false,
@@ -276,26 +272,12 @@
     ".gitignore": "bat"
 },
 "github-enterprise.uri": "https://git.nylcloud.com/",
-"terminal.integrated.tabs.defaultColor": null,
+"terminal.integrated.tabs.defaultColor": "terminal.ansiBlack",
 "cSpell.language": "en",
 "cSpell.maxNumberOfProblems": 100,
 "cSpell.numSuggestions": 8,
 "cSpell.minWordLength": 4,
-"cSpell.enabledLanguageIds": [
-    "csharp",
-    "go",
-    "javascript",
-    "javascriptreact",
-    "markdown",
-    "php",
-    "plaintext",
-    "typescript",
-    "typescriptreact",
-    "yml",
-    "python",
-    "R"
-],
-"cSpell.enabled": true,
+"cSpell.enabled": false,
 "cSpell.showStatus": true,
 "cSpell.words": [
     "autoflake"
@@ -378,7 +360,7 @@
 "notebook.formatOnCellExecution": false,
 "notebook.formatOnSave.enabled": false,
 "workbench.editorAssociations": {
-    "*.m4a": "wavPreview.audioPreview"
+    "*.m4a": "vscode.audioPreview"
 },
 "code-runner.executorMap": {
     "javascript": "node",
