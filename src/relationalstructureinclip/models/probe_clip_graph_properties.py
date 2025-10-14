@@ -22,6 +22,7 @@ import numpy as np
 import pandas as pd
 import scipy
 import torch
+import wandb
 from datasets import load_dataset
 from omegaconf import DictConfig
 from PIL import Image
@@ -292,6 +293,14 @@ def main(cfg: DictConfig):
 	"""Main entry point for probing CLIP embeddings."""
 	logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 	
+	# Initialize wandb logging
+	wandb.init(
+		project="clip-graph-probing",
+		dir=cfg.get("wandb_logging_dir", "./wandb_logs/"),
+		config=dict(cfg),
+		name=f"probe_clip_graph_properties_{cfg.get('dataset_split', 'full')}"
+	)
+	
 	# Load config
 	models = cfg.models
 	graph_columns = cfg.get("graph_columns") or []
@@ -396,6 +405,14 @@ def main(cfg: DictConfig):
 	# Create structured DataFrame
 	results_df = create_results_dataframe(results)
 	
+	# Log results to wandb
+	wandb.log({
+		"results_table": wandb.Table(dataframe=results_df),
+		"n_models_tested": len(models),
+		"n_graph_types": len(graph_columns),
+		"total_experiments": len(results)
+	})
+	
 	# Display and save results
 	output_path = cfg.get("output_path")
 	pretty_summary = cfg.get("pretty_summary", False)
@@ -411,6 +428,9 @@ def main(cfg: DictConfig):
 		logger.info("Saved results to %s", output_path)
 	else:
 		print(results_df.to_string(index=False))
+	
+	# Finish wandb run
+	wandb.finish()
 
 
 if __name__ == "__main__":

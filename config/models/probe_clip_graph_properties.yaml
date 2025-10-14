@@ -6,7 +6,7 @@ dataset_split: "train[:5%]"  # Use full dataset later on
 
 alpha_range_and_samples: [-3, 3, 7]  # From 1e-3 to 1e3, 7 samples
 
-output_path: "outputs/probing/probe_results.csv"
+output_path: outputs/probing/probe_results.csv
 pretty_summary: true
 inner_cv_folds: 5  # Number of inner cross-validation folds for hyperparameter tuning
 n_cv_folds: 5  # Number of outer cross-validation folds
@@ -28,4 +28,6 @@ models: [
   #"TripletCLIP/CC12M_TripletCLIP_ViTB12",
   #"helena-balabin/laion400m_laclip_vitb16",
 ]
-model_cache_dir: "/data/huggingface/transformers/"
+model_cache_dir: /data/huggingface/transformers/
+
+wandb_logging_dir: /data/wandb/
