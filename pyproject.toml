@@ -29,6 +29,8 @@ numpy = "^2.3.3"
 pandas = "^2.3.3"
 networkx = "^3.5"
 tqdm = "^4.67.1"
+pillow = "^11.3.0"
+torchmetrics = "^1.8.2"
 
 [tool.poetry.group.dev.dependencies]
 toml = "^0.10.2"
