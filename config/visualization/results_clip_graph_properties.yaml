@@ -60,18 +60,17 @@ metrics:
     ylim: [0, 1]
 
 # Color palette - one color per model
-# TODO change to pastel colors
 color_palette: [
   "#96c486",  # matcha green
-  "#ff7f0e",  # orange
-  "#2ca02c",  # green
-  "#d62728",  # red
-  "#9467bd",  # purple
-  "#8c564b",  # brown
-  "#e377c2",  # pink
-  "#7f7f7f",  # gray
-  "#bcbd22",  # olive
-  "#17becf"   # cyan
+  "#f8b87a",  # pastel orange
+  "#a8d5a2",  # pastel green
+  "#f29b9b",  # pastel red
+  "#c5b0e0",  # pastel purple
+  "#c4a484",  # pastel brown
+  "#f3b3d2",  # pastel pink
+  "#c9c9c9",  # pastel gray
+  "#d9d68f",  # pastel olive
+  "#a7dbe5"   # pastel cyan
 ]
 
 # Bar plot settings
