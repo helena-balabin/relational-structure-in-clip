@@ -1,6 +1,3 @@
-defaults:
-  - _self_
-
 vg_coco:
   name: helena-balabin/vg_coco_overlap_for_graphormer
   split: test
@@ -30,7 +27,3 @@ hf_push_to_hub: true
 hf_dataset_id: "helena-balabin/vg_coco_graphs_merged"
 hf_private: false
 hf_token: null
-
-hydra:
-  job:
-    chdir: false
