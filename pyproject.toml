@@ -32,6 +32,7 @@ tqdm = "^4.67.1"
 pillow = "^11.3.0"
 torchmetrics = "^1.8.2"
 matplotlib = "^3.10.7"
+optuna = "^4.5.0"
 
 [tool.poetry.group.dev.dependencies]
 toml = "^0.10.2"
