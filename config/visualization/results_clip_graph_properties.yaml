@@ -1,0 +1,80 @@
+# Configuration for visualizing CLIP graph properties probe results
+# This script creates grouped bar plots for the three metrics:
+# - Number of nodes (R² from regression)
+# - Number of edges (R² from regression) 
+# - Graph depth (accuracy from binary classification)
+
+# Input data
+input_path: "outputs/probing/probe_results.csv"
+
+# Output settings
+output_dir: "outputs/visualizations"
+output_filename: "clip_graph_properties_results.png"
+output_dpi: 300
+output_format: "png"
+save_plot: true
+show_plot: false
+
+# Plot appearance
+figure_size: [15, 5]  # width, height in inches
+title_fontsize: 14
+axis_label_fontsize: 12
+tick_label_fontsize: 10
+legend_fontsize: 10
+
+# Graph type ordering and labels
+graph_types: [
+  "amr_graphs",
+  "dependency_graphs", 
+  "image_graphs",
+  "action_image_graphs",
+  "spatial_image_graphs"
+]
+
+graph_type_labels:
+  amr_graphs: "AMR"
+  dependency_graphs: "Dependency"
+  image_graphs: "Image" 
+  action_image_graphs: "Action"
+  spatial_image_graphs: "Spatial"
+
+# Metric configurations
+metrics:
+  num_nodes:
+    column: "num_nodes_regression_r2"
+    std_column: "num_nodes_regression_r2_std"
+    title: "Number of Nodes (R²)"
+    ylabel: "R² Score"
+    ylim: null  # Auto-scale or [min, max]
+  num_edges:
+    column: "num_edges_regression_r2"
+    std_column: "num_edges_regression_r2_std"
+    title: "Number of Edges (R²)"
+    ylabel: "R² Score"
+    ylim: null
+  depth:
+    column: "depth==1_binary_classification_accuracy"
+    std_column: "depth==1_binary_classification_accuracy_std"
+    title: "Graph Depth (Accuracy)"
+    ylabel: "Accuracy"
+    ylim: [0, 1]
+
+# Color palette - one color per model
+# TODO change to pastel colors
+color_palette: [
+  "#96c486",  # matcha green
+  "#ff7f0e",  # orange
+  "#2ca02c",  # green
+  "#d62728",  # red
+  "#9467bd",  # purple
+  "#8c564b",  # brown
+  "#e377c2",  # pink
+  "#7f7f7f",  # gray
+  "#bcbd22",  # olive
+  "#17becf"   # cyan
+]
+
+# Bar plot settings
+bar_width: 0.15
+alpha: 0.8
+error_bars: true  # Set to true if you have error data
