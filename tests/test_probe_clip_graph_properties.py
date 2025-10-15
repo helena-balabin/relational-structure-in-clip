@@ -218,8 +218,8 @@ class TestProbingTask:
         np.testing.assert_array_equal(labels, expected)
     
     def test_extract_labels_depth_binary(self) -> None:
-        """Extract labels correctly for depth==1 target."""
-        task = ProbingTask("depth==1", "binary_classification")
+        """Extract labels correctly for depth1 target."""
+        task = ProbingTask("depth1", "binary_classification")
         
         df = pd.DataFrame({
             "graph_col": [
@@ -261,7 +261,7 @@ class TestProbingTask:
     
     def test_train_probe_classification(self) -> None:
         """Train probe delegates to trainer for classification."""
-        task = ProbingTask("depth==1", "binary_classification")
+        task = ProbingTask("depth1", "binary_classification")
         trainer = MagicMock()
         trainer.train_classifier.return_value = {"accuracy": 0.9}
         
@@ -333,7 +333,7 @@ class TestUtilityFunctions:
             {
                 "model": "model1",
                 "graph_type": "amr_graphs",
-                "target": "depth==1",
+                "target": "depth1",
                 "task": "binary_classification",
                 "metrics": {"accuracy": 0.9},
                 "std_metrics": {"accuracy": 0.02}
@@ -355,8 +355,8 @@ class TestUtilityFunctions:
         assert "graph_type" in df.columns
         assert "num_nodes_regression_r2" in df.columns
         assert "num_nodes_regression_r2_std" in df.columns
-        assert "depth==1_binary_classification_accuracy" in df.columns
-        assert "depth==1_binary_classification_accuracy_std" in df.columns
+        assert "depth1_binary_classification_accuracy" in df.columns
+        assert "depth1_binary_classification_accuracy_std" in df.columns
         
         # Check that we have one row per model-graph_type combination
         assert len(df) == 2  # model1 and model2, both with amr_graphs
@@ -365,14 +365,12 @@ class TestUtilityFunctions:
 class TestIntegration:
     """Integration tests with mocked external dependencies."""
     
-    @patch("relationalstructureinclip.models.probe_clip_graph_properties.wandb")
     @patch("relationalstructureinclip.models.probe_clip_graph_properties.load_dataset")
     @patch("relationalstructureinclip.models.probe_clip_graph_properties._compute_clip_embeddings")
     def test_main_function_basic_flow(
         self, 
         mock_compute_embeddings: Any,
-        mock_load_dataset: Any,
-        mock_wandb: Any
+        mock_load_dataset: Any
     ) -> None:
         """Main function executes basic flow without errors."""
         # Mock dataset loading - need enough samples for CV
@@ -398,13 +396,7 @@ class TestIntegration:
         
         # Mock embeddings computation - need to match number of samples
         mock_compute_embeddings.return_value = np.random.randn(10, 64)
-        
-        # Mock wandb
-        mock_wandb.init.return_value = None
-        mock_wandb.log.return_value = None
-        mock_wandb.finish.return_value = None
-        mock_wandb.Table = MagicMock
-        
+
         from omegaconf import DictConfig
         from relationalstructureinclip.models.probe_clip_graph_properties import main
         
@@ -430,4 +422,3 @@ class TestIntegration:
         # Verify key components were called
         mock_load_dataset.assert_called()
         mock_compute_embeddings.assert_called()
-        mock_wandb.init.assert_called()

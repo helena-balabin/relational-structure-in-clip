@@ -95,8 +95,8 @@ class VisualizationConfig:
             "ylim": None
         },
         "depth": {
-            "column": "depth==1_binary_classification_accuracy",
-            "std_column": "depth==1_binary_classification_accuracy_std",
+            "column": "depth1_binary_classification_accuracy",
+            "std_column": "depth1_binary_classification_accuracy_std",
             "title": "Graph Depth (Accuracy)",
             "ylabel": "Accuracy",
             "ylim": [0, 1]

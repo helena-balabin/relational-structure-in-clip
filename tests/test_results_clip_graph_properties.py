@@ -86,8 +86,8 @@ class TestPrepareVisualizationData:
             "graph_type": ["amr_graphs", "dependency_graphs", "amr_graphs", "dependency_graphs"],
             "num_nodes_regression_r2": [0.8, 0.7, 0.75, 0.65],
             "num_nodes_regression_r2_std": [0.05, 0.08, 0.06, 0.07],
-            "depth==1_binary_classification_accuracy": [0.9, 0.85, 0.88, 0.82],
-            "depth==1_binary_classification_accuracy_std": [0.02, 0.03, 0.025, 0.035]
+            "depth1_binary_classification_accuracy": [0.9, 0.85, 0.88, 0.82],
+            "depth1_binary_classification_accuracy_std": [0.02, 0.03, 0.025, 0.035]
         })
     
     def create_sample_config(self) -> VisualizationConfig:
@@ -102,8 +102,8 @@ class TestPrepareVisualizationData:
                     "ylabel": "R² Score"
                 },
                 "depth": {
-                    "column": "depth==1_binary_classification_accuracy",
-                    "std_column": "depth==1_binary_classification_accuracy_std",
+                    "column": "depth1_binary_classification_accuracy",
+                    "std_column": "depth1_binary_classification_accuracy_std",
                     "title": "Graph Depth",
                     "ylabel": "Accuracy"
                 }

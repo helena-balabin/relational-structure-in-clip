@@ -18,11 +18,11 @@ from pathlib import Path
 from typing import Any
 
 import hydra
+import mlflow
 import numpy as np
 import pandas as pd
 import scipy
 import torch
-import wandb
 from datasets import load_dataset
 from omegaconf import DictConfig
 from PIL import Image
@@ -149,7 +149,7 @@ class DataSplitter:
 @dataclass
 class ProbingTask:
 	"""Configuration for a single probing task."""
-	target: str  # e.g., "num_nodes", "num_edges", "depth==1"
+	target: str  # e.g., "num_nodes", "num_edges", "depth1"
 	task_type: str  # "regression" or "binary_classification"
 	
 	def extract_labels(self, df: pd.DataFrame, graph_col: str) -> np.ndarray:
@@ -158,7 +158,7 @@ class ProbingTask:
 			return df[graph_col].apply(lambda g: _get_graph_metric(g, "num_nodes")).values
 		elif self.target == "num_edges":
 			return df[graph_col].apply(lambda g: _get_graph_metric(g, "num_edges")).values
-		elif self.target == "depth==1":
+		elif self.target == "depth1":
 			depth = df[graph_col].apply(lambda g: _get_graph_metric(g, "depth")).values
 			return (depth == 1).astype(np.float32)
 		else:
@@ -290,148 +290,213 @@ def create_results_dataframe(results: list[dict]) -> pd.DataFrame:
 	config_name="probe_clip_graph_properties",
 )
 def main(cfg: DictConfig):
-	"""Main entry point for probing CLIP embeddings."""
-	logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
-	
-	# Initialize wandb logging
-	wandb.init(
-		project="clip-graph-probing",
-		dir=cfg.get("wandb_logging_dir", "./wandb_logs/"),
-		config=dict(cfg),
-		name=f"probe_clip_graph_properties_{cfg.get('dataset_split', 'full')}"
-	)
-	
-	# Load config
-	models = cfg.models
-	graph_columns = cfg.get("graph_columns") or []
-	manual_model_ids = set(cfg.get("manual_model_ids", []))
-	text_column = cfg.get("text_column", "sentences_raw")
-	max_samples = cfg.get("max_samples")
-	train_ratio = cfg.get("train_ratio", 0.8)
-	batch_size = cfg.get("batch_size", 32)
-	seed = cfg.get("random_seed", 42)
-	model_cache_dir = cfg.get("model_cache_dir")
-	coco_base_dir = Path(cfg.coco_base_dir)
+    """Main entry point for probing CLIP embeddings."""
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
-	# Load dataset
-	df = load_dataset(
-		cfg.dataset_hf_identifier,
-		cache_dir=cfg.dataset_cache_dir,
-		split=cfg.dataset_split,
-	).to_pandas()
+    # Initialize MLflow
+    mlflow.set_tracking_uri(cfg.get("mlflow_tracking_uri", "mlruns"))
+    experiment_name = cfg.get("mlflow_experiment_name", "clip_graph_probing")
+    mlflow.set_experiment(experiment_name)
+    
+    with mlflow.start_run(run_name=f"probe_run_{cfg.get('random_seed', 42)}"):
+        # Log configuration parameters
+        mlflow.log_params({
+            "models": cfg.models,
+            "graph_columns": cfg.get("graph_columns", []),
+            "text_column": cfg.get("text_column", "sentences_raw"),
+            "max_samples": cfg.get("max_samples"),
+            "train_ratio": cfg.get("train_ratio", 0.8),
+            "batch_size": cfg.get("batch_size", 32),
+            "random_seed": cfg.get("random_seed", 42),
+            "n_cv_folds": cfg.get("n_cv_folds", 5),
+            "inner_cv_folds": cfg.get("inner_cv_folds", 5),
+            "dataset_hf_identifier": cfg.dataset_hf_identifier,
+            "dataset_split": cfg.dataset_split,
+        })
 
-	# Extract texts and construct image paths
-	df["text"] = df[text_column]
-	df = df[df["text"].str.strip() != ""].reset_index(drop=True)
-	
-	# Construct full image paths
-	df["image_path"] = df["filepath"].apply(lambda x: str(coco_base_dir / x))
-	
-	if max_samples:
-		df = df.iloc[:max_samples].reset_index(drop=True)
-	
-	texts = df["text"].tolist()
-	image_paths = df["image_path"].tolist()
-	logger.info("Loaded %d samples", len(texts))
-	
-	# Determine graph columns
-	if not graph_columns:
-		graph_columns = [col for col in df.columns if col.endswith("_graphs")]
-	
-	# Initialize components
-	n_cv_folds = cfg.get("n_cv_folds", 5)  # Number of outer CV folds
-	trainer = ProbeTrainer(
-		device=cfg.get("device"),
-		cv_folds=cfg.get("inner_cv_folds", 5),
-		alpha_range_and_samples=tuple(cfg.get("alpha_range_and_samples", (-3, 3, 7)))
-	)
+        # Load config
+        models = cfg.models
+        graph_columns = cfg.get("graph_columns") or []
+        manual_model_ids = set(cfg.get("manual_model_ids", []))
+        text_column = cfg.get("text_column", "sentences_raw")
+        max_samples = cfg.get("max_samples")
+        train_ratio = cfg.get("train_ratio", 0.8)
+        batch_size = cfg.get("batch_size", 32)
+        seed = cfg.get("random_seed", 42)
+        model_cache_dir = cfg.get("model_cache_dir")
+        coco_base_dir = Path(cfg.coco_base_dir)
 
-	results = []
+        # Load dataset
+        df = load_dataset(
+            cfg.dataset_hf_identifier,
+            cache_dir=cfg.dataset_cache_dir,
+            split=cfg.dataset_split,
+        ).to_pandas()
 
-	for model_id in models:
-		if model_id in manual_model_ids:
-			logger.warning("Skipping %s (requires manual init)", model_id)
-			continue
-		
-		logger.info("Computing multimodal embeddings for %s", model_id)
-		embeddings = _compute_clip_embeddings(model_id, texts, image_paths, model_cache_dir, batch_size)
-		
-		# Define probing tasks
-		tasks = [
-			ProbingTask("num_nodes", "regression"),
-			ProbingTask("num_edges", "regression"),
-			ProbingTask("depth==1", "binary_classification")
-		]
-		
-		for graph_col in graph_columns:
-			if graph_col not in df.columns:
-				continue
-			
-			logger.info("Probing %s - %s", model_id, graph_col)
-			
-			for task in tasks:
-				# Extract labels for this task
-				labels = task.extract_labels(df, graph_col)
-				
-				# Perform outer cross-validation
-				fold_results = []
-				for fold in range(n_cv_folds):
-					# Get train/val split for this fold
-					fold_seed = seed + fold * 1000  # Different seed for each fold
-					splitter_fold = DataSplitter(train_ratio=train_ratio, seed=fold_seed)
-					train_idx, val_idx = splitter_fold.split(len(df))
-					
-					x_train = embeddings[train_idx]
-					x_val = embeddings[val_idx]
-					y_train = labels[train_idx].astype(np.float32)
-					y_val = labels[val_idx].astype(np.float32)
-					
-					# Train probe for this fold
-					fold_metrics = task.train_probe(trainer, x_train, y_train, x_val, y_val)
-					fold_results.append(fold_metrics)
-				
-				# Average metrics across folds
-				averaged_metrics = {}
-				std_metrics = {}
-				for metric_name in fold_results[0].keys():
-					values = [fold[metric_name] for fold in fold_results]
-					averaged_metrics[metric_name] = np.mean(values)
-					std_metrics[metric_name] = np.std(values)
+        # Extract texts and construct image paths
+        df["text"] = df[text_column]
+        df = df[df["text"].str.strip() != ""].reset_index(drop=True)
+        
+        # Construct full image paths
+        df["image_path"] = df["filepath"].apply(lambda x: str(coco_base_dir / x))
+        
+        if max_samples:
+            df = df.iloc[:max_samples].reset_index(drop=True)
+        
+        texts = df["text"].tolist()
+        image_paths = df["image_path"].tolist()
+        logger.info("Loaded %d samples", len(texts))
+        
+        # Log dataset info
+        mlflow.log_metrics({
+            "dataset_size": len(texts),
+            "num_graph_columns": len([col for col in df.columns if col.endswith("_graphs")]),
+        })
 
-				# Store averaged result
-				result = task.create_result(model_id, graph_col, averaged_metrics, std_metrics)
-				results.append(result.to_dict())
-	
-	# Create structured DataFrame
-	results_df = create_results_dataframe(results)
-	
-	# Log results to wandb
-	wandb.log({
-		"results_table": wandb.Table(dataframe=results_df),
-		"n_models_tested": len(models),
-		"n_graph_types": len(graph_columns),
-		"total_experiments": len(results)
-	})
-	
-	# Display and save results
-	output_path = cfg.get("output_path")
-	pretty_summary = cfg.get("pretty_summary", False)
-	
-	if pretty_summary:
-		logger.info("Results Summary:")
-		logger.info("\n" + results_df.to_string(index=False))
-	
-	if output_path:
-		output_path = Path(output_path).expanduser().resolve()
-		output_path.parent.mkdir(parents=True, exist_ok=True)
-		results_df.to_csv(output_path, index=False)
-		logger.info("Saved results to %s", output_path)
-	else:
-		print(results_df.to_string(index=False))
-	
-	# Finish wandb run
-	wandb.finish()
+        # Determine graph columns
+        if not graph_columns:
+            graph_columns = [col for col in df.columns if col.endswith("_graphs")]
+        
+        # Initialize components
+        n_cv_folds = cfg.get("n_cv_folds", 5)  # Number of outer CV folds
+        trainer = ProbeTrainer(
+            device=cfg.get("device"),
+            cv_folds=cfg.get("inner_cv_folds", 5),
+            alpha_range_and_samples=tuple(cfg.get("alpha_range_and_samples", (-3, 3, 7)))
+        )
+
+        results = []
+
+        for model_id in models:
+            if model_id in manual_model_ids:
+                logger.warning("Skipping %s (requires manual init)", model_id)
+                continue
+            
+            # Create nested run for each model
+            with mlflow.start_run(run_name=f"model_{model_id.replace('/', '_')}", nested=True):
+                mlflow.log_param("model_id", model_id)
+                
+                logger.info("Computing multimodal embeddings for %s", model_id)
+                embeddings = _compute_clip_embeddings(model_id, texts, image_paths, model_cache_dir, batch_size)
+                
+                # Log embedding shape
+                mlflow.log_metrics({
+                    "embedding_dim": embeddings.shape[1],
+                    "num_samples": embeddings.shape[0],
+                })
+                
+                # Define probing tasks
+                tasks = [
+                    ProbingTask("num_nodes", "regression"),
+                    ProbingTask("num_edges", "regression"),
+                    ProbingTask("depth1", "binary_classification")
+                ]
+                
+                model_results = {}  # Store results for this model
+                
+                for graph_col in graph_columns:
+                    if graph_col not in df.columns:
+                        continue
+                    
+                    logger.info("Probing %s - %s", model_id, graph_col)
+                    
+                    for task in tasks:
+                        # Extract labels for this task
+                        labels = task.extract_labels(df, graph_col)
+                        
+                        # Log label statistics
+                        mlflow.log_metrics({
+                            f"{graph_col}_{task.target}_mean": np.mean(labels),
+                            f"{graph_col}_{task.target}_std": np.std(labels),
+                            f"{graph_col}_{task.target}_min": np.min(labels),
+                            f"{graph_col}_{task.target}_max": np.max(labels),
+                        })
+                        
+                        # Perform outer cross-validation
+                        fold_results = []
+                        for fold in range(n_cv_folds):
+                            # Get train/val split for this fold
+                            fold_seed = seed + fold * 1000  # Different seed for each fold
+                            splitter_fold = DataSplitter(train_ratio=train_ratio, seed=fold_seed)
+                            train_idx, val_idx = splitter_fold.split(len(df))
+                            
+                            x_train = embeddings[train_idx]
+                            x_val = embeddings[val_idx]
+                            y_train = labels[train_idx].astype(np.float32)
+                            y_val = labels[val_idx].astype(np.float32)
+                            
+                            # Train probe for this fold
+                            fold_metrics = task.train_probe(trainer, x_train, y_train, x_val, y_val)
+                            fold_results.append(fold_metrics)
+                        
+                        # Average metrics across folds
+                        averaged_metrics = {}
+                        std_metrics = {}
+                        for metric_name in fold_results[0].keys():
+                            values = [fold[metric_name] for fold in fold_results]
+                            averaged_metrics[metric_name] = np.mean(values)
+                            std_metrics[metric_name] = np.std(values)
+
+                        # Log averaged metrics to MLflow
+                        for metric_name, value in averaged_metrics.items():
+                            mlflow.log_metric(f"{graph_col}_{task.target}_{metric_name}", value)
+                            mlflow.log_metric(f"{graph_col}_{task.target}_{metric_name}_std", std_metrics[metric_name])
+
+                        # Store averaged result
+                        result = task.create_result(model_id, graph_col, averaged_metrics, std_metrics)
+                        results.append(result.to_dict())
+                        
+                        # Store for model summary
+                        key = f"{graph_col}_{task.target}_{task.task_type}"
+                        model_results[key] = averaged_metrics
+                
+                # Log model summary metrics
+                if model_results:
+                    # Calculate average performance across all tasks
+                    all_scores = []
+                    for task_metrics in model_results.values():
+                        # Use the primary metric (r2 for regression, accuracy for classification)
+                        if "r2" in task_metrics:
+                            all_scores.append(task_metrics["r2"])
+                        elif "accuracy" in task_metrics:
+                            all_scores.append(task_metrics["accuracy"])
+                    
+                    if all_scores:
+                        mlflow.log_metric("avg_performance", np.mean(all_scores))
+                        mlflow.log_metric("performance_std", np.std(all_scores))
+        
+        # Create structured DataFrame
+        results_df = create_results_dataframe(results)
+        
+        # Log summary statistics
+        mlflow.log_metrics({
+            "total_experiments": len(results),
+            "num_models": len(
+                [r for r in results if r["graph_type"] == graph_columns[0] and r["target"] == "num_nodes"]
+			) if results else 0,
+            "num_graph_types": len(graph_columns),
+            "num_tasks": 3,  # num_nodes, num_edges, depth1
+        })
+        
+        # Display and save results
+        output_path = cfg.get("output_path")
+        pretty_summary = cfg.get("pretty_summary", False)
+        
+        if pretty_summary:
+            logger.info("Results Summary:")
+            logger.info("\n" + results_df.to_string(index=False))
+        
+        if output_path:
+            output_path = Path(output_path).expanduser().resolve()
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            results_df.to_csv(output_path, index=False)
+            logger.info("Saved results to %s", output_path)
+            
+            # Also log as MLflow artifact
+            mlflow.log_artifact(str(output_path))
+        else:
+            print(results_df.to_string(index=False))
 
 
 if __name__ == "__main__":
-	main()
+    main()
