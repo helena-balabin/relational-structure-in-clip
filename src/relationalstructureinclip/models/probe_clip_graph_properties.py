@@ -205,13 +205,14 @@ def _get_graph_metric(graph_dict, key):
 
 
 def _compute_clip_embeddings(model_id, texts, image_paths, model_cache_dir, batch_size=64):
-	"""Compute CLIP text and vision embeddings and concatenate them."""
+	"""Compute CLIP text and vision embeddings separately."""
 	device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 	processor = CLIPProcessor.from_pretrained(model_id, cache_dir=model_cache_dir, use_fast=True)
 	model = CLIPModel.from_pretrained(model_id, cache_dir=model_cache_dir).to(device)
 	model.eval()
 
-	all_embeddings = []
+	all_text_embeddings = []
+	all_image_embeddings = []
 	for i in tqdm(range(0, len(texts), batch_size), desc=f"Computing embeddings for {model_id}"):
 		batch_texts = texts[i:i + batch_size]
 		batch_image_paths = image_paths[i:i + batch_size]
@@ -241,11 +242,11 @@ def _compute_clip_embeddings(model_id, texts, image_paths, model_cache_dir, batc
 			# Get image embeddings
 			image_embeddings = model.get_image_features(**image_inputs)
 			
-			# Concatenate text and image embeddings
-			combined_embeddings = torch.cat([text_embeddings, image_embeddings], dim=-1)
-			all_embeddings.append(combined_embeddings.cpu().numpy())
+			# Store embeddings separately
+			all_text_embeddings.append(text_embeddings.cpu().numpy())
+			all_image_embeddings.append(image_embeddings.cpu().numpy())
 	
-	return np.vstack(all_embeddings)
+	return np.vstack(all_text_embeddings), np.vstack(all_image_embeddings)
 
 
 def create_results_dataframe(results: list[dict]) -> pd.DataFrame:
@@ -289,6 +290,127 @@ def create_results_dataframe(results: list[dict]) -> pd.DataFrame:
 	return result_df
 
 
+def _process_graph_columns(
+    graph_columns: list[str],
+    embeddings: np.ndarray,
+    embedding_type: str,
+    df: pd.DataFrame,
+    tasks: list[ProbingTask],
+    model_id: str,
+    trainer: ProbeTrainer,
+    n_cv_folds: int,
+    seed: int,
+    train_ratio: float,
+    results: list[dict],
+    model_results: dict[str, dict]
+) -> None:
+    """Process a set of graph columns with the specified embeddings.
+    
+    Args:
+        graph_columns: List of graph column names to process
+        embeddings: Embeddings to use (text or image)
+        embedding_type: Type of embeddings for logging ("text" or "image")
+        df: DataFrame containing the data
+        tasks: List of probing tasks to perform
+        model_id: Model identifier
+        trainer: ProbeTrainer instance
+        n_cv_folds: Number of CV folds
+        seed: Random seed
+        train_ratio: Train/validation split ratio
+        results: List to append results to
+        model_results: Dictionary to store model results
+    """
+    for graph_col in graph_columns:
+        if graph_col not in df.columns:
+            continue
+        
+        logger.info("Probing %s - %s (using %s embeddings)", model_id, graph_col, embedding_type)
+        
+        for task in tasks:
+            # Extract labels for this task
+            labels = task.extract_labels(df, graph_col)
+            
+            # Filter out examples with zero edges/nodes/depth
+            if task.target in ["num_nodes", "num_edges"]:
+                # For regression tasks, remove examples where target is 0
+                valid_mask = labels > 0
+            elif task.target == "depth1":
+                # For depth1 task, remove examples where depth is 0
+                depth_values = df[graph_col].apply(lambda g: _get_graph_metric(g, "depth")).values
+                valid_mask = depth_values > 0
+            else:
+                # For other tasks, keep all examples
+                valid_mask = np.ones(len(labels), dtype=bool)
+            
+            # Apply filtering
+            filtered_labels = labels[valid_mask]
+            filtered_embeddings = embeddings[valid_mask]
+            
+            # Skip if no valid examples remain
+            if len(filtered_labels) == 0:
+                logger.warning("No valid examples for task %s on %s, skipping", task.target, graph_col)
+                continue
+            
+            # Log filtering statistics
+            logger.info("Task %s on %s: filtered from %d to %d examples (removed %d zeros)", 
+                       task.target, graph_col, len(labels), len(filtered_labels), 
+                       len(labels) - len(filtered_labels))
+            
+            # Log label statistics
+            mlflow.log_metrics({
+                f"{graph_col}_{task.target}_mean": np.mean(filtered_labels),
+                f"{graph_col}_{task.target}_std": np.std(filtered_labels),
+                f"{graph_col}_{task.target}_min": np.min(filtered_labels),
+                f"{graph_col}_{task.target}_max": np.max(filtered_labels),
+                f"{graph_col}_{task.target}_n_samples": len(filtered_labels),
+                f"{graph_col}_{task.target}_n_filtered": len(labels) - len(filtered_labels),
+            })
+            
+            # Perform outer cross-validation
+            fold_results = []
+            for fold in range(n_cv_folds):
+                # Get train/val split for this fold
+                fold_seed = seed + fold * 1000  # Different seed for each fold
+                splitter_fold = DataSplitter(train_ratio=train_ratio, seed=fold_seed)
+                train_idx, val_idx = splitter_fold.split(len(filtered_labels))
+                
+                x_train = filtered_embeddings[train_idx]
+                x_val = filtered_embeddings[val_idx]
+                y_train = filtered_labels[train_idx].astype(np.float32)
+                y_val = filtered_labels[val_idx].astype(np.float32)
+                
+                # Train probe for this fold
+                fold_metrics = task.train_probe(trainer, x_train, y_train, x_val, y_val)
+                fold_results.append(fold_metrics)
+            
+            # Skip if no fold results (shouldn't happen with the earlier check, but safety)
+            if not fold_results:
+                continue
+            
+            # Average metrics across folds
+            averaged_metrics = {}
+            std_metrics = {}
+            for metric_name in fold_results[0].keys():
+                values = [fold[metric_name] for fold in fold_results]
+                # if GPU support is used, convert to CPU first
+                values = [v.cpu() if isinstance(v, torch.Tensor) else v for v in values]
+                averaged_metrics[metric_name] = np.mean(values)
+                std_metrics[metric_name] = np.std(values)
+
+            # Log averaged metrics to MLflow
+            for metric_name, value in averaged_metrics.items():
+                mlflow.log_metric(f"{graph_col}_{task.target}_{metric_name}", value)
+                mlflow.log_metric(f"{graph_col}_{task.target}_{metric_name}_std", std_metrics[metric_name])
+
+            # Store averaged result
+            result = task.create_result(model_id, graph_col, averaged_metrics, std_metrics)
+            results.append(result.to_dict())
+            
+            # Store for model summary
+            key = f"{graph_col}_{task.target}_{task.task_type}"
+            model_results[key] = averaged_metrics
+
+
 @hydra.main(
 	version_base="1.3",
 	config_path=str(Path(__file__).resolve().parents[3] / "config" / "models"),
@@ -311,7 +433,8 @@ def main(cfg: DictConfig):
         # Log configuration parameters
         mlflow.log_params({
             "models": cfg.models,
-            "graph_columns": cfg.get("graph_columns", []),
+            "text_graph_columns": cfg.get("text_graph_columns", []),
+            "image_graph_columns": cfg.get("image_graph_columns", []),
             "text_column": cfg.get("text_column", "sentences_raw"),
             "max_samples": cfg.get("max_samples"),
             "train_ratio": cfg.get("train_ratio", 0.8),
@@ -325,7 +448,8 @@ def main(cfg: DictConfig):
 
         # Load config
         models = cfg.models
-        graph_columns = cfg.get("graph_columns") or []
+        text_graph_columns = cfg.get("text_graph_columns") or []
+        image_graph_columns = cfg.get("image_graph_columns") or []
         manual_model_ids = set(cfg.get("manual_model_ids", []))
         text_column = cfg.get("text_column", "sentences_raw")
         max_samples = cfg.get("max_samples")
@@ -359,12 +483,17 @@ def main(cfg: DictConfig):
         # Log dataset info
         mlflow.log_metrics({
             "dataset_size": len(texts),
-            "num_graph_columns": len([col for col in df.columns if col.endswith("_graphs")]),
+            "num_text_graph_columns": len(text_graph_columns),
+            "num_image_graph_columns": len(image_graph_columns),
+            "total_graph_columns": len(text_graph_columns) + len(image_graph_columns),
         })
 
         # Determine graph columns
-        if not graph_columns:
-            graph_columns = [col for col in df.columns if col.endswith("_graphs")]
+        if not text_graph_columns and not image_graph_columns:
+            # Fallback: use all graph columns for both text and image embeddings
+            all_graph_columns = [col for col in df.columns if col.endswith("_graphs")]
+            text_graph_columns = all_graph_columns
+            image_graph_columns = all_graph_columns
         
         # Initialize components
         n_cv_folds = cfg.get("n_cv_folds", 5)  # Number of outer CV folds
@@ -385,13 +514,16 @@ def main(cfg: DictConfig):
             with mlflow.start_run(run_name=f"model_{model_id.replace('/', '_')}", nested=True):
                 mlflow.log_param("model_id", model_id)
                 
-                logger.info("Computing multimodal embeddings for %s", model_id)
-                embeddings = _compute_clip_embeddings(model_id, texts, image_paths, model_cache_dir, batch_size)
+                logger.info("Computing separate text and image embeddings for %s", model_id)
+                text_embeddings, image_embeddings = _compute_clip_embeddings(
+                    model_id, texts, image_paths, model_cache_dir, batch_size
+                )
                 
-                # Log embedding shape
+                # Log embedding shapes
                 mlflow.log_metrics({
-                    "embedding_dim": embeddings.shape[1],
-                    "num_samples": embeddings.shape[0],
+                    "text_embedding_dim": text_embeddings.shape[1],
+                    "image_embedding_dim": image_embeddings.shape[1],
+                    "num_samples": text_embeddings.shape[0],
                 })
                 
                 # Define probing tasks
@@ -403,96 +535,25 @@ def main(cfg: DictConfig):
                 
                 model_results = {}  # Store results for this model
                 
-                for graph_col in graph_columns:
-                    if graph_col not in df.columns:
-                        continue
-                    
-                    logger.info("Probing %s - %s", model_id, graph_col)
-                    
-                    for task in tasks:
-                        # Extract labels for this task
-                        labels = task.extract_labels(df, graph_col)
-                        
-                        # Filter out examples with zero edges/nodes/depth
-                        if task.target in ["num_nodes", "num_edges"]:
-                            # For regression tasks, remove examples where target is 0
-                            valid_mask = labels > 0
-                        elif task.target == "depth1":
-                            # For depth1 task, remove examples where depth is 0
-                            depth_values = df[graph_col].apply(lambda g: _get_graph_metric(g, "depth")).values
-                            valid_mask = depth_values > 0
-                        else:
-                            # For other tasks, keep all examples
-                            valid_mask = np.ones(len(labels), dtype=bool)
-                        
-                        # Apply filtering
-                        filtered_labels = labels[valid_mask]
-                        filtered_embeddings = embeddings[valid_mask]
-                        
-                        # Skip if no valid examples remain
-                        if len(filtered_labels) == 0:
-                            logger.warning("No valid examples for task %s on %s, skipping", task.target, graph_col)
-                            continue
-                        
-                        # Log filtering statistics
-                        logger.info("Task %s on %s: filtered from %d to %d examples (removed %d zeros)", 
-                                   task.target, graph_col, len(labels), len(filtered_labels), 
-                                   len(labels) - len(filtered_labels))
-                        
-                        # Log label statistics
-                        mlflow.log_metrics({
-                            f"{graph_col}_{task.target}_mean": np.mean(filtered_labels),
-                            f"{graph_col}_{task.target}_std": np.std(filtered_labels),
-                            f"{graph_col}_{task.target}_min": np.min(filtered_labels),
-                            f"{graph_col}_{task.target}_max": np.max(filtered_labels),
-                            f"{graph_col}_{task.target}_n_samples": len(filtered_labels),
-                            f"{graph_col}_{task.target}_n_filtered": len(labels) - len(filtered_labels),
-                        })
-                        
-                        # Perform outer cross-validation
-                        fold_results = []
-                        for fold in range(n_cv_folds):
-                            # Get train/val split for this fold
-                            fold_seed = seed + fold * 1000  # Different seed for each fold
-                            splitter_fold = DataSplitter(train_ratio=train_ratio, seed=fold_seed)
-                            train_idx, val_idx = splitter_fold.split(len(filtered_labels))
-                            
-                            x_train = filtered_embeddings[train_idx]
-                            x_val = filtered_embeddings[val_idx]
-                            y_train = filtered_labels[train_idx].astype(np.float32)
-                            y_val = filtered_labels[val_idx].astype(np.float32)
-                            
-                            # Train probe for this fold
-                            fold_metrics = task.train_probe(trainer, x_train, y_train, x_val, y_val)
-                            fold_results.append(fold_metrics)
-                        
-                        # Skip if no fold results (shouldn't happen with the earlier check, but safety)
-                        if not fold_results:
-                            continue
-                        
-                        # Average metrics across folds
-                        averaged_metrics = {}
-                        std_metrics = {}
-                        for metric_name in fold_results[0].keys():
-                            values = [fold[metric_name] for fold in fold_results]
-                            # if GPU support is used, convert to CPU first
-                            if torch.cuda.is_available():
-                                values = [v.cpu() if isinstance(v, torch.Tensor) else v for v in values]
-                            averaged_metrics[metric_name] = np.mean(values)
-                            std_metrics[metric_name] = np.std(values)
-
-                        # Log averaged metrics to MLflow
-                        for metric_name, value in averaged_metrics.items():
-                            mlflow.log_metric(f"{graph_col}_{task.target}_{metric_name}", value)
-                            mlflow.log_metric(f"{graph_col}_{task.target}_{metric_name}_std", std_metrics[metric_name])
-
-                        # Store averaged result
-                        result = task.create_result(model_id, graph_col, averaged_metrics, std_metrics)
-                        results.append(result.to_dict())
-                        
-                        # Store for model summary
-                        key = f"{graph_col}_{task.target}_{task.task_type}"
-                        model_results[key] = averaged_metrics
+                # Process text/image graph columns with text/image embeddings, respectively
+                for graph_col, emb_type, emb in [
+                    (text_graph_columns, "text", text_embeddings),
+                    (image_graph_columns, "image", image_embeddings)
+                ]:
+                    _process_graph_columns(
+                        graph_columns=graph_col,
+                        embeddings=emb,
+                        embedding_type=emb_type,
+                        df=df,
+                        tasks=tasks,
+                        model_id=model_id,
+                        trainer=trainer,
+                        n_cv_folds=n_cv_folds,
+                        seed=seed,
+                        train_ratio=train_ratio,
+                        results=results,
+                        model_results=model_results
+                    )
                 
                 # Log model summary metrics
                 if model_results:
@@ -515,12 +576,15 @@ def main(cfg: DictConfig):
         results_df = create_results_dataframe(results)
         
         # Log summary statistics
+        all_graph_columns = text_graph_columns + image_graph_columns
         mlflow.log_metrics({
             "total_experiments": len(results),
             "num_models": len(
-                [r for r in results if r["graph_type"] == graph_columns[0] and r["target"] == "num_nodes"]
-			) if results else 0,
-            "num_graph_types": len(graph_columns),
+                [r for r in results if r["graph_type"] == all_graph_columns[0] and r["target"] == "num_nodes"]
+			) if results and all_graph_columns else 0,
+            "num_graph_types": len(all_graph_columns),
+            "num_text_graph_types": len(text_graph_columns),
+            "num_image_graph_types": len(image_graph_columns),
             "num_tasks": 3,  # num_nodes, num_edges, depth1
         })
         

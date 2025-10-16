@@ -2,7 +2,7 @@ coco_base_dir: /data/vg/coco_images/
 
 dataset_hf_identifier: "helena-balabin/vg_coco_graphs_merged"
 dataset_cache_dir: /data/huggingface/datasets/
-dataset_split: "train[:2%]"  # Use full dataset or something like train[:5%]
+dataset_split: "train"  # Use full dataset or something like train[:5%]
 
 alpha_range_and_samples: [-3, 3, 7]  # From 1e-3 to 1e3, 7 samples
 
@@ -10,9 +10,11 @@ output_path: outputs/probing/probe_results.csv
 pretty_summary: true
 inner_cv_folds: 5  # Number of inner cross-validation folds for hyperparameter tuning
 n_cv_folds: 5  # Number of outer cross-validation folds
-graph_columns: [
+text_graph_columns: [
   "amr_graphs",
   "dependency_graphs",
+]
+image_graph_columns: [
   "image_graphs",
   "action_image_graphs",
   "spatial_image_graphs",

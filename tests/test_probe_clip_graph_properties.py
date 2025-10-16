@@ -15,6 +15,7 @@ from relationalstructureinclip.models.probe_clip_graph_properties import (
     ProbeTrainer,
     ProbingTask,
     _get_graph_metric,
+    _process_graph_columns,
     create_results_dataframe,
 )
 
@@ -373,17 +374,78 @@ class TestUtilityFunctions:
         assert len(df) == 2  # model1 and model2, both with amr_graphs
 
 
+class TestProcessGraphColumns:
+    """Tests for the _process_graph_columns helper function."""
+    
+    @patch("relationalstructureinclip.models.probe_clip_graph_properties.mlflow")
+    @patch("relationalstructureinclip.models.probe_clip_graph_properties.ProbingTask.train_probe")
+    def test_process_graph_columns_basic(self, mock_train_probe: Any, mock_mlflow: Any) -> None:
+        """Test basic functionality of _process_graph_columns."""
+        # Mock the train_probe method to avoid himalaya issues in tests
+        mock_train_probe.return_value = {"r2": 0.75}
+        
+        # Create test data
+        df = pd.DataFrame({
+            "test_graphs": [
+                {"num_nodes": 3, "num_edges": 2, "depth": 1},
+                {"num_nodes": 5, "num_edges": 4, "depth": 2},
+                {"num_nodes": 4, "num_edges": 3, "depth": 1},
+                {"num_nodes": 6, "num_edges": 5, "depth": 2},
+                {"num_nodes": 2, "num_edges": 1, "depth": 1},
+                {"num_nodes": 7, "num_edges": 6, "depth": 2}
+            ]
+        })
+        
+        embeddings = np.random.randn(6, 16)
+        tasks = [ProbingTask("num_nodes", "regression")]
+        trainer = ProbeTrainer(cv_folds=2, alpha_range_and_samples=(-1, 1, 3))
+        results = []
+        model_results = {}
+        
+        # Call the function
+        _process_graph_columns(
+            graph_columns=["test_graphs"],
+            embeddings=embeddings,
+            embedding_type="text",
+            df=df,
+            tasks=tasks,
+            model_id="test-model",
+            trainer=trainer,
+            n_cv_folds=2,
+            seed=42,
+            train_ratio=0.75,
+            results=results,
+            model_results=model_results
+        )
+        
+        # Check that results were populated
+        assert len(results) == 1
+        assert results[0]["model"] == "test-model"
+        assert results[0]["graph_type"] == "test_graphs"
+        assert results[0]["target"] == "num_nodes"
+        assert "r2" in results[0]["metrics"]
+        
+        # Check that model_results were populated
+        assert len(model_results) == 1
+        key = list(model_results.keys())[0]
+        assert "test_graphs_num_nodes_regression" == key
+
+
 class TestIntegration:
     """Integration tests with mocked external dependencies."""
     
     @patch("relationalstructureinclip.models.probe_clip_graph_properties.load_dataset")
     @patch("relationalstructureinclip.models.probe_clip_graph_properties._compute_clip_embeddings")
+    @patch("relationalstructureinclip.models.probe_clip_graph_properties.ProbingTask.train_probe")
     def test_main_function_basic_flow(
         self, 
+        mock_train_probe: Any,
         mock_compute_embeddings: Any,
         mock_load_dataset: Any
     ) -> None:
         """Main function executes basic flow without errors."""
+        # Mock the train_probe method to avoid himalaya issues in tests
+        mock_train_probe.return_value = {"r2": 0.75}
         # Mock dataset loading - need enough samples for CV
         mock_dataset = MagicMock()
         mock_df = pd.DataFrame({
@@ -406,7 +468,9 @@ class TestIntegration:
         mock_load_dataset.return_value = mock_dataset
         
         # Mock embeddings computation - need to match number of samples
-        mock_compute_embeddings.return_value = np.random.randn(10, 64)
+        # Now returns tuple of (text_embeddings, image_embeddings)
+        # Use fewer features to avoid himalaya warnings
+        mock_compute_embeddings.return_value = (np.random.randn(10, 16), np.random.randn(10, 16))
 
         from omegaconf import DictConfig
         from relationalstructureinclip.models.probe_clip_graph_properties import main
@@ -418,6 +482,8 @@ class TestIntegration:
             "dataset_cache_dir": "/tmp",
             "dataset_split": "test", 
             "coco_base_dir": "/tmp/coco",
+            "text_graph_columns": ["amr_graphs"],  # Test with AMR graphs using text embeddings
+            "image_graph_columns": [],  # No image graphs in this test
             "n_cv_folds": 2,  # Small number for testing
             "inner_cv_folds": 2,  # Small number for CV in trainer
             "max_samples": 10  # Enough samples for CV
