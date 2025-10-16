@@ -1,0 +1,65 @@
+# Configuration for visualizing graph property histograms
+# This script creates histogram subplots showing the distribution of graph properties
+# across different graph types. The grid layout has:
+# - Rows: different graph types (AMR, Dependency, Image, Action, Spatial)
+# - Columns: different properties (Number of Nodes, Number of Edges, Graph Depth)
+
+# Dataset settings - using the same as probe_clip_graph_properties.yaml
+dataset_hf_identifier: "helena-balabin/vg_coco_graphs_merged"
+dataset_cache_dir: /data/huggingface/datasets/
+dataset_split: "train"  # Use small subset [:2%] for testing, change to full dataset as needed
+
+# Output settings
+output_dir: "outputs/visualizations"
+output_filename: "graph_properties_histograms.png"
+output_dpi: 300
+output_format: "png"
+save_plot: true
+show_plot: false
+
+# Plot appearance
+figure_size: [15, 12]  # width, height in inches (larger than bar plots due to grid)
+title_fontsize: 14
+axis_label_fontsize: 12
+tick_label_fontsize: 10
+suptitle_fontsize: 16
+
+# Graph type settings - matching the probe configuration
+text_graph_columns: [
+  "amr_graphs",
+  "dependency_graphs"
+]
+
+image_graph_columns: [
+  "image_graphs",
+  "action_image_graphs",
+  "spatial_image_graphs"
+]
+
+graph_type_labels:
+  amr_graphs: "AMR"
+  dependency_graphs: "Dependency"
+  image_graphs: "Image"
+  action_image_graphs: "Action"
+  spatial_image_graphs: "Spatial"
+
+# Property settings
+properties: ["num_nodes", "num_edges", "depth"]
+property_labels:
+  num_nodes: "Number of Nodes"
+  num_edges: "Number of Edges"
+  depth: "Graph Depth"
+
+# Color and styling - using matcha green from the project palette
+color: "#96c486"  # matcha green (same as in results visualization)
+alpha: 0.7
+edge_color: "#2d5016"  # darker green for histogram edges
+edge_linewidth: 1.2
+
+# Histogram settings
+bins_nodes: 30
+bins_edges: 30
+bins_depth: null  # Will auto-generate integer bins: [0, 1, 2, 3, ...]
+
+# Grid settings
+grid_alpha: 0.3
