@@ -96,12 +96,16 @@ class TestProbeTrainer:
     
     @patch("relationalstructureinclip.models.probe_clip_graph_properties.RidgeClassifierCV")
     @patch("relationalstructureinclip.models.probe_clip_graph_properties.accuracy_score")
-    def test_train_classifier_normal_case(self, mock_accuracy_score: Any, mock_ridge_classifier: Any) -> None:
-        """Train classifier returns accuracy for normal case."""
+    @patch("relationalstructureinclip.models.probe_clip_graph_properties.f1_score")
+    def test_train_classifier_normal_case(
+        self, mock_f1_score: Any, mock_accuracy_score: Any, mock_ridge_classifier: Any
+    ) -> None:
+        """Train classifier returns accuracy and F1 score for normal case."""
         # Setup mocks
         mock_model = MagicMock()
         mock_ridge_classifier.return_value = mock_model
         mock_accuracy_score.return_value = 0.85
+        mock_f1_score.return_value = 0.82
         
         trainer = ProbeTrainer()
         
@@ -118,12 +122,16 @@ class TestProbeTrainer:
         mock_model.fit.assert_called_once_with(x_train, y_train)
         mock_model.predict.assert_called_once_with(x_val)
         
-        assert result == {"accuracy": 0.85}
+        assert result == {"accuracy": 0.85, "f1": 0.82}
     
     @patch("relationalstructureinclip.models.probe_clip_graph_properties.accuracy_score")
-    def test_train_classifier_single_class(self, mock_accuracy_score: Any) -> None:
+    @patch("relationalstructureinclip.models.probe_clip_graph_properties.f1_score")
+    def test_train_classifier_single_class(
+        self, mock_f1_score: Any, mock_accuracy_score: Any
+    ) -> None:
         """Train classifier handles single class case."""
         mock_accuracy_score.return_value = 1.0
+        mock_f1_score.return_value = 1.0
         
         trainer = ProbeTrainer()
         
@@ -137,7 +145,8 @@ class TestProbeTrainer:
         
         # Should use majority class prediction
         mock_accuracy_score.assert_called_once()
-        assert result == {"accuracy": 1.0}
+        mock_f1_score.assert_called_once()
+        assert result == {"accuracy": 1.0, "f1": 1.0}
 
 
 class TestDataSplitter:
@@ -263,7 +272,7 @@ class TestProbingTask:
         """Train probe delegates to trainer for classification."""
         task = ProbingTask("depth1", "binary_classification")
         trainer = MagicMock()
-        trainer.train_classifier.return_value = {"accuracy": 0.9}
+        trainer.train_classifier.return_value = {"accuracy": 0.9, "f1": 0.88}
         
         x_train = np.random.randn(10, 5)
         y_train = np.random.randn(10)
@@ -273,7 +282,7 @@ class TestProbingTask:
         result = task.train_probe(trainer, x_train, y_train, x_val, y_val)
         
         trainer.train_classifier.assert_called_once_with(x_train, y_train, x_val, y_val)
-        assert result == {"accuracy": 0.9}
+        assert result == {"accuracy": 0.9, "f1": 0.88}
     
     def test_train_probe_unknown_task_type(self) -> None:
         """Train probe raises error for unknown task type."""
@@ -335,8 +344,8 @@ class TestUtilityFunctions:
                 "graph_type": "amr_graphs",
                 "target": "depth1",
                 "task": "binary_classification",
-                "metrics": {"accuracy": 0.9},
-                "std_metrics": {"accuracy": 0.02}
+                "metrics": {"accuracy": 0.9, "f1": 0.88},
+                "std_metrics": {"accuracy": 0.02, "f1": 0.03}
             },
             {
                 "model": "model2",
@@ -357,6 +366,8 @@ class TestUtilityFunctions:
         assert "num_nodes_regression_r2_std" in df.columns
         assert "depth1_binary_classification_accuracy" in df.columns
         assert "depth1_binary_classification_accuracy_std" in df.columns
+        assert "depth1_binary_classification_f1" in df.columns
+        assert "depth1_binary_classification_f1_std" in df.columns
         
         # Check that we have one row per model-graph_type combination
         assert len(df) == 2  # model1 and model2, both with amr_graphs
@@ -384,7 +395,7 @@ class TestIntegration:
                 {"num_nodes": 4, "num_edges": 3, "depth": 1},
                 {"num_nodes": 6, "num_edges": 5, "depth": 2},
                 {"num_nodes": 2, "num_edges": 1, "depth": 1},
-                {"num_nodes": 7, "num_edges": 6, "depth": 2},  # Changed from depth: 3
+                {"num_nodes": 7, "num_edges": 6, "depth": 2},
                 {"num_nodes": 3, "num_edges": 2, "depth": 1},
                 {"num_nodes": 5, "num_edges": 4, "depth": 2},
                 {"num_nodes": 4, "num_edges": 3, "depth": 1},

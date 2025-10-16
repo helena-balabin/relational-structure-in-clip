@@ -30,7 +30,7 @@ from himalaya.scoring import r2_score
 from omegaconf import DictConfig
 from PIL import Image
 from sklearn.linear_model import RidgeClassifierCV
-from sklearn.metrics import accuracy_score
+from sklearn.metrics import accuracy_score, f1_score
 from tqdm import tqdm
 from transformers import CLIPModel, CLIPProcessor
 
@@ -113,13 +113,14 @@ class ProbeTrainer:
             # Only one class present - return majority class accuracy
             majority_pred = np.full_like(y_val, y_train[0])
             accuracy = accuracy_score(y_val, majority_pred)
-            return {"accuracy": accuracy}
-        
+            f1 = f1_score(y_val, majority_pred)
+            return {"accuracy": accuracy, "f1": f1}
+
         # Use RidgeClassifierCV which performs internal cross-validation
         model = RidgeClassifierCV(
             alphas=self.alphas,
             cv=self.cv_folds,
-            scoring='accuracy'
+            scoring='f1'
         )
         
         # Fit the model
@@ -128,8 +129,9 @@ class ProbeTrainer:
         y_pred = model.predict(x_val)
         # Calculate accuracy
         accuracy = accuracy_score(y_val, y_pred)
-        
-        return {"accuracy": accuracy}
+        f1 = f1_score(y_val, y_pred)
+
+        return {"accuracy": accuracy, "f1": f1}
 
 
 class DataSplitter:
@@ -502,6 +504,8 @@ def main(cfg: DictConfig):
                             all_scores.append(task_metrics["r2"])
                         elif "accuracy" in task_metrics:
                             all_scores.append(task_metrics["accuracy"])
+                        elif "f1" in task_metrics:
+                            all_scores.append(task_metrics["f1"])
                     
                     if all_scores:
                         mlflow.log_metric("avg_performance", np.mean(all_scores))
