@@ -411,12 +411,40 @@ def main(cfg: DictConfig):
                         # Extract labels for this task
                         labels = task.extract_labels(df, graph_col)
                         
+                        # Filter out examples with zero edges/nodes/depth
+                        if task.target in ["num_nodes", "num_edges"]:
+                            # For regression tasks, remove examples where target is 0
+                            valid_mask = labels > 0
+                        elif task.target == "depth1":
+                            # For depth1 task, remove examples where depth is 0
+                            depth_values = df[graph_col].apply(lambda g: _get_graph_metric(g, "depth")).values
+                            valid_mask = depth_values > 0
+                        else:
+                            # For other tasks, keep all examples
+                            valid_mask = np.ones(len(labels), dtype=bool)
+                        
+                        # Apply filtering
+                        filtered_labels = labels[valid_mask]
+                        filtered_embeddings = embeddings[valid_mask]
+                        
+                        # Skip if no valid examples remain
+                        if len(filtered_labels) == 0:
+                            logger.warning("No valid examples for task %s on %s, skipping", task.target, graph_col)
+                            continue
+                        
+                        # Log filtering statistics
+                        logger.info("Task %s on %s: filtered from %d to %d examples (removed %d zeros)", 
+                                   task.target, graph_col, len(labels), len(filtered_labels), 
+                                   len(labels) - len(filtered_labels))
+                        
                         # Log label statistics
                         mlflow.log_metrics({
-                            f"{graph_col}_{task.target}_mean": np.mean(labels),
-                            f"{graph_col}_{task.target}_std": np.std(labels),
-                            f"{graph_col}_{task.target}_min": np.min(labels),
-                            f"{graph_col}_{task.target}_max": np.max(labels),
+                            f"{graph_col}_{task.target}_mean": np.mean(filtered_labels),
+                            f"{graph_col}_{task.target}_std": np.std(filtered_labels),
+                            f"{graph_col}_{task.target}_min": np.min(filtered_labels),
+                            f"{graph_col}_{task.target}_max": np.max(filtered_labels),
+                            f"{graph_col}_{task.target}_n_samples": len(filtered_labels),
+                            f"{graph_col}_{task.target}_n_filtered": len(labels) - len(filtered_labels),
                         })
                         
                         # Perform outer cross-validation
@@ -425,16 +453,20 @@ def main(cfg: DictConfig):
                             # Get train/val split for this fold
                             fold_seed = seed + fold * 1000  # Different seed for each fold
                             splitter_fold = DataSplitter(train_ratio=train_ratio, seed=fold_seed)
-                            train_idx, val_idx = splitter_fold.split(len(df))
+                            train_idx, val_idx = splitter_fold.split(len(filtered_labels))
                             
-                            x_train = embeddings[train_idx]
-                            x_val = embeddings[val_idx]
-                            y_train = labels[train_idx].astype(np.float32)
-                            y_val = labels[val_idx].astype(np.float32)
+                            x_train = filtered_embeddings[train_idx]
+                            x_val = filtered_embeddings[val_idx]
+                            y_train = filtered_labels[train_idx].astype(np.float32)
+                            y_val = filtered_labels[val_idx].astype(np.float32)
                             
                             # Train probe for this fold
                             fold_metrics = task.train_probe(trainer, x_train, y_train, x_val, y_val)
                             fold_results.append(fold_metrics)
+                        
+                        # Skip if no fold results (shouldn't happen with the earlier check, but safety)
+                        if not fold_results:
+                            continue
                         
                         # Average metrics across folds
                         averaged_metrics = {}
