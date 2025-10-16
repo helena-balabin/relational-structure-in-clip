@@ -55,8 +55,8 @@ metrics:
   depth:
     column: "depth1_binary_classification_accuracy"
     std_column: "depth1_binary_classification_accuracy_std"
-    title: "Graph Depth (Accuracy)"
-    ylabel: "Accuracy"
+    title: "Graph Depth (F1)"
+    ylabel: "F1"
     ylim: [0, 1]
 
 # Color palette - one color per model
