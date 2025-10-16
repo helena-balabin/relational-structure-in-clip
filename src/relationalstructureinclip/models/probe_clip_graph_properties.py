@@ -2,9 +2,9 @@
 
 This script loads a merged VG/COCO dataset, computes CLIP text embeddings,
 and trains simple linear probes to predict:
-  - Number of nodes (regression)
-  - Number of edges (regression)
-  - Whether depth == 1 or > 1 (binary classification)
+    - Number of nodes (regression)
+    - Number of edges (regression)
+    - Whether depth == 1 or > 1 (binary classification)
 
 Results are saved as JSON with metrics per model/graph-type/target.
 """
@@ -24,10 +24,13 @@ import pandas as pd
 import scipy
 import torch
 from datasets import load_dataset
+from himalaya.backend import set_backend
+from himalaya.ridge import RidgeCV
+from himalaya.scoring import r2_score
 from omegaconf import DictConfig
 from PIL import Image
-from sklearn.linear_model import RidgeClassifierCV, RidgeCV
-from sklearn.metrics import accuracy_score, r2_score
+from sklearn.linear_model import RidgeClassifierCV
+from sklearn.metrics import accuracy_score
 from tqdm import tqdm
 from transformers import CLIPModel, CLIPProcessor
 
@@ -85,9 +88,9 @@ class ProbeTrainer:
         model = RidgeCV(
             alphas=self.alphas,
             cv=self.cv_folds,
-            scoring='r2'
+            solver_params={"score_func": r2_score}
         )
-        
+
         # Fit the model
         model.fit(x_train, y_train)
         # Predict on validation set
@@ -199,7 +202,7 @@ def _get_graph_metric(graph_dict, key):
 	return graph_dict.get(key, 0)
 
 
-def _compute_clip_embeddings(model_id, texts, image_paths, model_cache_dir, batch_size=32):
+def _compute_clip_embeddings(model_id, texts, image_paths, model_cache_dir, batch_size=64):
 	"""Compute CLIP text and vision embeddings and concatenate them."""
 	device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 	processor = CLIPProcessor.from_pretrained(model_id, cache_dir=model_cache_dir, use_fast=True)
@@ -293,6 +296,10 @@ def main(cfg: DictConfig):
     """Main entry point for probing CLIP embeddings."""
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
+    # Set backend for himalaya if specified
+    if "himalaya_backend" in cfg:
+        set_backend(cfg.himalaya_backend)
+
     # Initialize MLflow
     mlflow.set_tracking_uri(cfg.get("mlflow_tracking_uri", "mlruns"))
     experiment_name = cfg.get("mlflow_experiment_name", "clip_graph_probing")
@@ -306,7 +313,7 @@ def main(cfg: DictConfig):
             "text_column": cfg.get("text_column", "sentences_raw"),
             "max_samples": cfg.get("max_samples"),
             "train_ratio": cfg.get("train_ratio", 0.8),
-            "batch_size": cfg.get("batch_size", 32),
+            "batch_size": cfg.get("batch_size", 64),
             "random_seed": cfg.get("random_seed", 42),
             "n_cv_folds": cfg.get("n_cv_folds", 5),
             "inner_cv_folds": cfg.get("inner_cv_folds", 5),
@@ -321,7 +328,7 @@ def main(cfg: DictConfig):
         text_column = cfg.get("text_column", "sentences_raw")
         max_samples = cfg.get("max_samples")
         train_ratio = cfg.get("train_ratio", 0.8)
-        batch_size = cfg.get("batch_size", 32)
+        batch_size = cfg.get("batch_size", 64)
         seed = cfg.get("random_seed", 42)
         model_cache_dir = cfg.get("model_cache_dir")
         coco_base_dir = Path(cfg.coco_base_dir)
@@ -434,6 +441,9 @@ def main(cfg: DictConfig):
                         std_metrics = {}
                         for metric_name in fold_results[0].keys():
                             values = [fold[metric_name] for fold in fold_results]
+                            # if GPU support is used, convert to CPU first
+                            if torch.cuda.is_available():
+                                values = [v.cpu() if isinstance(v, torch.Tensor) else v for v in values]
                             averaged_metrics[metric_name] = np.mean(values)
                             std_metrics[metric_name] = np.std(values)
 
