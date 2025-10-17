@@ -1,0 +1,1 @@
+"""Convert CLIP variants to a reasonable format."""

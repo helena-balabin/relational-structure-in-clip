@@ -1,0 +1,2 @@
+output_dir: data/huggingface/converted
+hf_cache_dir: data/huggingface/transformers
