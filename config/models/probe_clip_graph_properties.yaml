@@ -19,14 +19,10 @@ image_graph_columns: [
   "action_image_graphs",
   "spatial_image_graphs",
 ]
-manual_model_ids: [
-  "TripletCLIP/CC12M_TripletCLIP_ViTB12",
-  "helena-balabin/laion400m_laclip_vitb16",
-  "avik-pal/hycoclip",
-]
 models: [
   "openai/clip-vit-base-patch32",
-  #"google/siglip2-so400m-patch16-naflex",
+  "google/siglip2-so400m-patch16-naflex",
+  #"avik-pal/hycoclip",
   #"TripletCLIP/CC12M_TripletCLIP_ViTB12",
   #"helena-balabin/laion400m_laclip_vitb16",
 ]

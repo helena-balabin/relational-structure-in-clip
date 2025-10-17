@@ -32,7 +32,7 @@ from PIL import Image
 from sklearn.linear_model import RidgeClassifierCV
 from sklearn.metrics import accuracy_score, f1_score
 from tqdm import tqdm
-from transformers import CLIPModel, CLIPProcessor
+from transformers import AutoModel, AutoProcessor
 
 logger = logging.getLogger(__name__)
 
@@ -205,10 +205,10 @@ def _get_graph_metric(graph_dict, key):
 
 
 def _compute_clip_embeddings(model_id, texts, image_paths, model_cache_dir, batch_size=64):
-	"""Compute CLIP text and vision embeddings separately."""
+	"""Compute CLIP-like text and vision embeddings separately."""
 	device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-	processor = CLIPProcessor.from_pretrained(model_id, cache_dir=model_cache_dir, use_fast=True)
-	model = CLIPModel.from_pretrained(model_id, cache_dir=model_cache_dir).to(device)
+	processor = AutoProcessor.from_pretrained(model_id, cache_dir=model_cache_dir, use_fast=True)
+	model = AutoModel.from_pretrained(model_id, cache_dir=model_cache_dir).to(device)
 	model.eval()
 
 	all_text_embeddings = []
@@ -450,7 +450,6 @@ def main(cfg: DictConfig):
         models = cfg.models
         text_graph_columns = cfg.get("text_graph_columns") or []
         image_graph_columns = cfg.get("image_graph_columns") or []
-        manual_model_ids = set(cfg.get("manual_model_ids", []))
         text_column = cfg.get("text_column", "sentences_raw")
         max_samples = cfg.get("max_samples")
         train_ratio = cfg.get("train_ratio", 0.8)
@@ -506,10 +505,6 @@ def main(cfg: DictConfig):
         results = []
 
         for model_id in models:
-            if model_id in manual_model_ids:
-                logger.warning("Skipping %s (requires manual init)", model_id)
-                continue
-            
             # Create nested run for each model
             with mlflow.start_run(run_name=f"model_{model_id.replace('/', '_')}", nested=True):
                 mlflow.log_param("model_id", model_id)
