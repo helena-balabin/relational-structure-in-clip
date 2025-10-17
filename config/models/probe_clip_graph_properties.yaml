@@ -22,9 +22,9 @@ image_graph_columns: [
 models: [
   "openai/clip-vit-base-patch32",
   "google/siglip2-so400m-patch16-naflex",
-  #"avik-pal/hycoclip",
-  #"TripletCLIP/CC12M_TripletCLIP_ViTB12",
-  #"helena-balabin/laion400m_laclip_vitb16",
+  "helena-balabin/hycoclip-vit-b",
+  "helena-balabin/tripletclip-vit-b",
+  "helena-balabin/laclip-vit-b16",
 ]
 model_cache_dir: /data/huggingface/transformers/
 himalaya_backend: "torch_cuda"

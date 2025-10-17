@@ -1,2 +1,15 @@
-output_dir: data/huggingface/converted
-hf_cache_dir: data/huggingface/transformers
+hycoclip_path: /data/huggingface/transformers/hycoclip_vit_b.pth
+
+tripletclip_hf_identifier: TripletCLIP/CC12M_TripletCLIP_ViTB12
+
+laclip_path: /data/huggingface/transformers/laion400m_laclip_vitb16.pt
+
+hf_original_clip_model_identifier: openai/clip-vit-base-patch16
+hf_cache_dir: /data/huggingface/transformers
+
+output_dir: /data/huggingface/converted
+
+push_to_hub: true
+hf_hyco_clip_model_identifier: helena-balabin/hycoclip-vit-b
+hf_triplet_clip_model_identifier: helena-balabin/tripletclip-vit-b
+hf_la_clip_model_identifier: helena-balabin/laclip-vit-b16
