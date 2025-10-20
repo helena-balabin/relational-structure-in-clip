@@ -227,9 +227,9 @@ class TestProbingTask:
         
         np.testing.assert_array_equal(labels, expected)
     
-    def test_extract_labels_depth_binary(self) -> None:
-        """Extract labels correctly for depth1 target."""
-        task = ProbingTask("depth1", "binary_classification")
+    def test_extract_labels_depth_regression(self) -> None:
+        """Extract labels correctly for depth regression target."""
+        task = ProbingTask("depth", "regression")
         
         df = pd.DataFrame({
             "graph_col": [
@@ -241,7 +241,7 @@ class TestProbingTask:
         })
         
         labels = task.extract_labels(df, "graph_col")
-        expected = np.array([1.0, 0.0, 1.0, 0.0])
+        expected = np.array([1.0, 2.0, 1.0, 3.0])
         
         np.testing.assert_array_equal(labels, expected)
     
@@ -271,7 +271,7 @@ class TestProbingTask:
     
     def test_train_probe_classification(self) -> None:
         """Train probe delegates to trainer for classification."""
-        task = ProbingTask("depth1", "binary_classification")
+        task = ProbingTask("depth", "binary_classification")
         trainer = MagicMock()
         trainer.train_classifier.return_value = {"accuracy": 0.9, "f1": 0.88}
         
@@ -343,10 +343,10 @@ class TestUtilityFunctions:
             {
                 "model": "model1",
                 "graph_type": "amr_graphs",
-                "target": "depth1",
-                "task": "binary_classification",
-                "metrics": {"accuracy": 0.9, "f1": 0.88},
-                "std_metrics": {"accuracy": 0.02, "f1": 0.03}
+                "target": "depth",
+                "task": "regression",
+                "metrics": {"r2": 0.65},
+                "std_metrics": {"r2": 0.04}
             },
             {
                 "model": "model2",
@@ -365,10 +365,8 @@ class TestUtilityFunctions:
         assert "graph_type" in df.columns
         assert "num_nodes_regression_r2" in df.columns
         assert "num_nodes_regression_r2_std" in df.columns
-        assert "depth1_binary_classification_accuracy" in df.columns
-        assert "depth1_binary_classification_accuracy_std" in df.columns
-        assert "depth1_binary_classification_f1" in df.columns
-        assert "depth1_binary_classification_f1_std" in df.columns
+        assert "depth_regression_r2" in df.columns
+        assert "depth_regression_r2_std" in df.columns
         
         # Check that we have one row per model-graph_type combination
         assert len(df) == 2  # model1 and model2, both with amr_graphs

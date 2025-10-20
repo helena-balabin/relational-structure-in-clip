@@ -4,7 +4,7 @@ This script creates grouped bar plots showing probe performance across different
 graph types and models. It generates three subplots for:
   - Number of nodes (R² regression performance)
   - Number of edges (R² regression performance) 
-  - Graph depth (binary classification F1)
+    - Graph depth (R² regression performance)
 
 Each subplot shows grouped bars where groups are graph types and individual bars
 are different models.
@@ -95,11 +95,11 @@ class VisualizationConfig:
             "ylim": None
         },
         "depth": {
-            "column": "depth1_binary_classification_f1",
-            "std_column": "depth1_binary_classification_f1_std",
-            "title": "Graph Depth (F1)",
-            "ylabel": "F1 Score",
-            "ylim": [0, 1]
+            "column": "depth_regression_r2",
+            "std_column": "depth_regression_r2_std",
+            "title": "Graph Depth (R²)",
+            "ylabel": "R² Score",
+            "ylim": None
         }
     })
     

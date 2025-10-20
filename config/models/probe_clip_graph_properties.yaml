@@ -20,11 +20,11 @@ image_graph_columns: [
   "spatial_image_graphs",
 ]
 models: [
-  "openai/clip-vit-base-patch32",
-  "google/siglip2-so400m-patch16-naflex",
-  "helena-balabin/hycoclip-vit-b",
   "helena-balabin/tripletclip-vit-b",
   "helena-balabin/laclip-vit-b16",
+  "helena-balabin/hycoclip-vit-b",
+  "openai/clip-vit-base-patch32",
+  "google/siglip2-so400m-patch16-naflex",
 ]
 model_cache_dir: /data/huggingface/transformers/
 himalaya_backend: "torch_cuda"

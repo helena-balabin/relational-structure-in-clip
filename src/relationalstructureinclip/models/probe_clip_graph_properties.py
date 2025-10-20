@@ -4,7 +4,7 @@ This script loads a merged VG/COCO dataset, computes CLIP text embeddings,
 and trains simple linear probes to predict:
     - Number of nodes (regression)
     - Number of edges (regression)
-    - Whether depth == 1 or > 1 (binary classification)
+    - Graph depth (regression)
 
 Results are saved as JSON with metrics per model/graph-type/target.
 """
@@ -154,7 +154,7 @@ class DataSplitter:
 @dataclass
 class ProbingTask:
 	"""Configuration for a single probing task."""
-	target: str  # e.g., "num_nodes", "num_edges", "depth1"
+	target: str  # e.g., "num_nodes", "num_edges", "depth"
 	task_type: str  # "regression" or "binary_classification"
 	
 	def extract_labels(self, df: pd.DataFrame, graph_col: str) -> np.ndarray:
@@ -163,9 +163,8 @@ class ProbingTask:
 			return df[graph_col].apply(lambda g: _get_graph_metric(g, "num_nodes")).values
 		elif self.target == "num_edges":
 			return df[graph_col].apply(lambda g: _get_graph_metric(g, "num_edges")).values
-		elif self.target == "depth1":
-			depth = df[graph_col].apply(lambda g: _get_graph_metric(g, "depth")).values
-			return (depth == 1).astype(np.float32)
+		elif self.target == "depth":
+			return df[graph_col].apply(lambda g: _get_graph_metric(g, "depth")).values.astype(np.float32)
 		else:
 			raise ValueError(f"Unknown target: {self.target}")
 	
@@ -178,7 +177,7 @@ class ProbingTask:
 			return trainer.train_classifier(x_train, y_train, x_val, y_val)
 		else:
 			raise ValueError(f"Unknown task type: {self.task_type}")
-
+	
 	def create_result(
 		self,
 		model: str,
@@ -331,13 +330,9 @@ def _process_graph_columns(
             labels = task.extract_labels(df, graph_col)
             
             # Filter out examples with zero edges/nodes/depth
-            if task.target in ["num_nodes", "num_edges"]:
+            if task.target in ["num_nodes", "num_edges", "depth"]:
                 # For regression tasks, remove examples where target is 0
                 valid_mask = labels > 0
-            elif task.target == "depth1":
-                # For depth1 task, remove examples where depth is 0
-                depth_values = df[graph_col].apply(lambda g: _get_graph_metric(g, "depth")).values
-                valid_mask = depth_values > 0
             else:
                 # For other tasks, keep all examples
                 valid_mask = np.ones(len(labels), dtype=bool)
@@ -525,7 +520,7 @@ def main(cfg: DictConfig):
                 tasks = [
                     ProbingTask("num_nodes", "regression"),
                     ProbingTask("num_edges", "regression"),
-                    ProbingTask("depth1", "binary_classification")
+                    ProbingTask("depth", "regression")
                 ]
                 
                 model_results = {}  # Store results for this model
@@ -580,7 +575,7 @@ def main(cfg: DictConfig):
             "num_graph_types": len(all_graph_columns),
             "num_text_graph_types": len(text_graph_columns),
             "num_image_graph_types": len(image_graph_columns),
-            "num_tasks": 3,  # num_nodes, num_edges, depth1
+            "num_tasks": len(tasks),
         })
         
         # Display and save results

@@ -2,7 +2,7 @@
 # This script creates grouped bar plots for the three metrics:
 # - Number of nodes (R² from regression)
 # - Number of edges (R² from regression) 
-# - Graph depth (accuracy from binary classification)
+# - Graph depth (R² from regression)
 
 # Input data
 input_path: "outputs/probing/probe_results.csv"
@@ -53,11 +53,11 @@ metrics:
     ylabel: "R² Score"
     ylim: null
   depth:
-    column: "depth1_binary_classification_accuracy"
-    std_column: "depth1_binary_classification_accuracy_std"
-    title: "Graph Depth (F1)"
-    ylabel: "F1"
-    ylim: [0, 1]
+    column: "depth_regression_r2"
+    std_column: "depth_regression_r2_std"
+    title: "Graph Depth (R²)"
+    ylabel: "R² Score"
+    ylim: null
 
 # Color palette - one color per model
 color_palette: [

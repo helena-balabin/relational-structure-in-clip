@@ -86,8 +86,8 @@ class TestPrepareVisualizationData:
             "graph_type": ["amr_graphs", "dependency_graphs", "amr_graphs", "dependency_graphs"],
             "num_nodes_regression_r2": [0.8, 0.7, 0.75, 0.65],
             "num_nodes_regression_r2_std": [0.05, 0.08, 0.06, 0.07],
-            "depth1_binary_classification_f1": [0.9, 0.85, 0.88, 0.82],
-            "depth1_binary_classification_f1_std": [0.02, 0.03, 0.025, 0.035]
+            "depth_regression_r2": [0.55, 0.48, 0.52, 0.46],
+            "depth_regression_r2_std": [0.06, 0.05, 0.07, 0.04]
         })
     
     def create_sample_config(self) -> VisualizationConfig:
@@ -102,10 +102,10 @@ class TestPrepareVisualizationData:
                     "ylabel": "R² Score"
                 },
                 "depth": {
-                    "column": "depth1_binary_classification_f1",
-                    "std_column": "depth1_binary_classification_f1_std",
+                    "column": "depth_regression_r2",
+                    "std_column": "depth_regression_r2_std",
                     "title": "Graph Depth",
-                    "ylabel": "F1"
+                    "ylabel": "R² Score"
                 }
             },
             error_bars=True
@@ -195,7 +195,7 @@ class TestCreateGroupedBarPlots:
         
         return {
             "num_nodes": {"mean": mean_df, "std": std_df},
-            "depth": {"mean": mean_df * 1.1, "std": std_df * 0.5}  # Different values
+            "depth": {"mean": mean_df * 0.8, "std": std_df * 0.5}  # Different values
         }
     
     def create_sample_config(self) -> VisualizationConfig:
@@ -204,7 +204,7 @@ class TestCreateGroupedBarPlots:
             figure_size=[10, 5],
             metrics={
                 "num_nodes": {"title": "Number of Nodes", "ylabel": "R² Score"},
-                "depth": {"title": "Graph Depth", "ylabel": "F1", "ylim": [0, 1]}
+                "depth": {"title": "Graph Depth", "ylabel": "R² Score", "ylim": None}
             },
             graph_type_labels={
                 "amr_graphs": "AMR",
@@ -262,6 +262,7 @@ class TestCreateGroupedBarPlots:
         
         data = {"depth": self.create_sample_data()["depth"]}
         cfg = self.create_sample_config()
+        cfg.metrics["depth"]["ylim"] = [0, 1]
         
         _ = create_grouped_bar_plots(data, cfg)
         
