@@ -68,13 +68,15 @@ class ProbeTrainer:
         self,
         device: str | None = None,
         cv_folds: int = 5,
-        alpha_range_and_samples: tuple[float, float, int] = (-3, 3, 7)
+        alpha_range_and_samples: tuple[float, float, int] = (-3, 3, 7),
+        n_targets_batch: int = 500
 	):
         """Initialize probe trainer with specified device and CV folds."""
         self.device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
         self.cv_folds = cv_folds
         # Ridge regression alpha values to try
         self.alphas = np.logspace(*alpha_range_and_samples)
+        self.n_targets_batch = n_targets_batch
     
     def train_regression(
         self,
@@ -88,7 +90,7 @@ class ProbeTrainer:
         model = RidgeCV(
             alphas=self.alphas,
             cv=self.cv_folds,
-            solver_params={"score_func": r2_score}
+            solver_params={"score_func": r2_score, "n_targets_batch": self.n_targets_batch}
         )
 
         # Fit the model
@@ -494,7 +496,8 @@ def main(cfg: DictConfig):
         trainer = ProbeTrainer(
             device=cfg.get("device"),
             cv_folds=cfg.get("inner_cv_folds", 5),
-            alpha_range_and_samples=tuple(cfg.get("alpha_range_and_samples", (-3, 3, 7)))
+            alpha_range_and_samples=tuple(cfg.get("alpha_range_and_samples", (-3, 3, 7))),
+            n_targets_batch=cfg.get("n_targets_batch", 500),
         )
 
         results = []
