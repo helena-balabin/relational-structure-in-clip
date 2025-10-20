@@ -5,6 +5,7 @@ tripletclip_hf_identifier: TripletCLIP/CC12M_TripletCLIP_ViTB12
 laclip_path: /data/huggingface/transformers/laion400m_laclip_vitb16.pt
 
 hf_original_clip_model_identifier: openai/clip-vit-base-patch16
+hf_original_clip_model_identifier_patch32: openai/clip-vit-base-patch32
 hf_cache_dir: /data/huggingface/transformers
 
 output_dir: /data/huggingface/converted

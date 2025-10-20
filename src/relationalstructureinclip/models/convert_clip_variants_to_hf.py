@@ -23,6 +23,7 @@ class ConvertConfig:
     tripletclip_hf_identifier: str = MISSING
     laclip_path: str = MISSING
     hf_original_clip_model_identifier: str = MISSING
+    hf_original_clip_model_identifier_patch32: str = MISSING
     hf_triplet_clip_model_identifier: str = MISSING
     hf_hyco_clip_model_identifier: str = MISSING
     hf_la_clip_model_identifier: str = MISSING
@@ -284,11 +285,17 @@ def convert_tripletclip_to_hf(cfg: ConvertConfig) -> Tuple[CLIPModel, CLIPProces
     ).model.vision_model
 
     # Initialize HuggingFace CLIP model and populate with converted weights
-    hf_clip_config = CLIPConfig.from_pretrained(cfg.hf_original_clip_model_identifier, cache_dir=cfg.hf_cache_dir)
+    hf_clip_config = CLIPConfig.from_pretrained(
+        cfg.hf_original_clip_model_identifier_patch32,
+        cache_dir=cfg.hf_cache_dir,
+    )
     hf_clip_model = CLIPModel(hf_clip_config)
     hf_clip_model.text_model = tripletclip_text
     hf_clip_model.vision_model = tripletclip_vision
-    hf_clip_processor = CLIPProcessor.from_pretrained(cfg.hf_original_clip_model_identifier, cache_dir=cfg.hf_cache_dir)
+    hf_clip_processor = CLIPProcessor.from_pretrained(
+        cfg.hf_original_clip_model_identifier_patch32,
+        cache_dir=cfg.hf_cache_dir,
+    )
 
     # Save the model and processor to the output directory
     hf_clip_model.save_pretrained(os.path.join(output_dir, "tripletclip-vit-b"))
