@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 import pytest
 import torch
+from himalaya.backend import set_backend
 from relationalstructureinclip.models.probe_clip_graph_properties import (
     DataSplitter,
     ProbeResult,
@@ -148,6 +149,42 @@ class TestProbeTrainer:
         mock_accuracy_score.assert_called_once()
         mock_f1_score.assert_called_once()
         assert result == {"accuracy": 1.0, "f1": 1.0}
+    
+    def test_train_regression_large_dataset(self) -> None:
+        """Test ridge regression with large dataset (100k samples) using random embeddings."""
+        trainer = ProbeTrainer()
+
+        # Set himalaya backend to torch_cuda to test
+        set_backend("torch_cuda")
+
+        # Set random seed for reproducibility
+        np.random.seed(42)
+        
+        # Create large dataset with typical CLIP embedding dimensions
+        n_samples = 100_000
+        embedding_dim = 512  # Typical CLIP embedding dimension
+        
+        # Generate random embeddings and target values
+        x_train = np.random.randn(n_samples, embedding_dim).astype(np.float32)
+        # Make targets 2D to work around himalaya r2_score bug with 1D targets
+        y_train = np.random.randn(n_samples, 1).astype(np.float32)
+        
+        # Create smaller validation set
+        n_val = 1_000
+        x_val = np.random.randn(n_val, embedding_dim).astype(np.float32)
+        y_val = np.random.randn(n_val, 1).astype(np.float32)
+        
+        # Train the regression model - this should not crash with CUDA OOM
+        result = trainer.train_regression(x_train, y_train, x_val, y_val)
+        
+        # Verify we get a valid R² score
+        assert "r2" in result
+        r2_value = result["r2"].item()
+        
+        assert isinstance(r2_value, (float, np.floating))
+        # R² can be negative for poor fits with random data, so just check it's a number
+        assert not np.isnan(r2_value)
+        assert not np.isinf(r2_value)
 
 
 class TestDataSplitter:
