@@ -31,6 +31,7 @@ from omegaconf import DictConfig
 from PIL import Image
 from sklearn.linear_model import RidgeClassifierCV
 from sklearn.metrics import accuracy_score, f1_score
+from sklearn.model_selection import KFold, StratifiedKFold
 from tqdm import tqdm
 from transformers import AutoModel, AutoProcessor
 
@@ -66,17 +67,13 @@ class ProbeTrainer:
     
     def __init__(
         self,
-        device: str | None = None,
         cv_folds: int = 5,
         alpha_range_and_samples: tuple[float, float, int] = (-3, 3, 7),
-        n_targets_batch: int = 500
 	):
         """Initialize probe trainer with specified device and CV folds."""
-        self.device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
         self.cv_folds = cv_folds
         # Ridge regression alpha values to try
         self.alphas = np.logspace(*alpha_range_and_samples)
-        self.n_targets_batch = n_targets_batch
     
     def train_regression(
         self,
@@ -89,8 +86,11 @@ class ProbeTrainer:
         # Use RidgeCV which performs internal cross-validation
         model = RidgeCV(
             alphas=self.alphas,
-            cv=self.cv_folds,
-            solver_params={"score_func": r2_score, "n_targets_batch": self.n_targets_batch}
+            cv=KFold(n_splits=self.cv_folds, shuffle=False),
+            solver_params={
+                "score_func": r2_score,
+                "n_alphas_batch": 1,
+            }
         )
 
         # Fit the model
@@ -121,7 +121,7 @@ class ProbeTrainer:
         # Use RidgeClassifierCV which performs internal cross-validation
         model = RidgeClassifierCV(
             alphas=self.alphas,
-            cv=self.cv_folds,
+            cv=StratifiedKFold(n_splits=self.cv_folds, shuffle=False),
             scoring='f1'
         )
         
@@ -494,10 +494,8 @@ def main(cfg: DictConfig):
         # Initialize components
         n_cv_folds = cfg.get("n_cv_folds", 5)  # Number of outer CV folds
         trainer = ProbeTrainer(
-            device=cfg.get("device"),
             cv_folds=cfg.get("inner_cv_folds", 5),
             alpha_range_and_samples=tuple(cfg.get("alpha_range_and_samples", (-3, 3, 7))),
-            n_targets_batch=cfg.get("n_targets_batch", 500),
         )
 
         results = []

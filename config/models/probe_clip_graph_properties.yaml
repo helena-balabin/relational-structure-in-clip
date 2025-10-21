@@ -5,7 +5,6 @@ dataset_cache_dir: /data/huggingface/datasets/
 dataset_split: "train"  # Use full dataset or something like train[:5%]
 
 alpha_range_and_samples: [-3, 3, 7]  # From 1e-3 to 1e3, 7 samples
-n_targets_batch: 500  # Number of samples to process in a batch during regression
 
 output_path: outputs/probing/probe_results.csv
 pretty_summary: true
@@ -25,9 +24,9 @@ models: [
   "helena-balabin/laclip-vit-b16",
   "helena-balabin/hycoclip-vit-b",
   "openai/clip-vit-base-patch32",
-  "google/siglip2-so400m-patch16-naflex",
+  "google/siglip2-base-patch16-224",
 ]
 model_cache_dir: /data/huggingface/transformers/
-himalaya_backend: "torch_cuda"
+himalaya_backend: "torch_cuda"  # Choose between "numpy" or "torch_cuda" if there is sufficient GPU memory
 
 mlflow_tracking_uri: /data/mlflow/mlruns-25/
