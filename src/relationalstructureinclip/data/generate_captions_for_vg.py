@@ -51,7 +51,13 @@ def generate_captions(cfg: DictConfig):
         inputs = processor(
             images, text=[cfg.prompt] * len(images), return_tensors="pt"
         ).to(device, torch.float16)
+        
+        input_ids_length = inputs.input_ids.shape[1]
         generated_ids = model.generate(**inputs, max_new_tokens=500)
+        
+        # Slice the generated IDs to exclude the prompt
+        generated_ids = generated_ids[:, input_ids_length:]
+        
         generated_texts = processor.batch_decode(
             generated_ids, skip_special_tokens=True
         )
