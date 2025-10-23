@@ -30,7 +30,7 @@ def generate_captions(cfg: DictConfig):
 
     # Load the model and processor
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    processor = Blip2Processor.from_pretrained(cfg.model_name)
+    processor = Blip2Processor.from_pretrained(cfg.model_name, use_fast=True, cache_dir=cfg.model_cache_dir)
     model = Blip2ForConditionalGeneration.from_pretrained(
         cfg.model_name,
         torch_dtype=torch.float16,
@@ -51,7 +51,7 @@ def generate_captions(cfg: DictConfig):
         inputs = processor(
             images, text=[cfg.prompt] * len(images), return_tensors="pt"
         ).to(device, torch.float16)
-        generated_ids = model.generate(**inputs, max_new_tokens=50)
+        generated_ids = model.generate(**inputs, max_new_tokens=500)
         generated_texts = processor.batch_decode(
             generated_ids, skip_special_tokens=True
         )

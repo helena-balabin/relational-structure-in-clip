@@ -1,7 +1,7 @@
 model_name: "Salesforce/blip2-opt-2.7b"
 model_cache_dir: "/data/huggingface/transformers"
 
-prompt: "Write five COCO-style captions"
+prompt: "Question: What are five captions for this image? Answer:"
 
 dataset_name: "helena-balabin/vg_for_graphormer"
 data_cache_dir: "/data/huggingface/datasets"
