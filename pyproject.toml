@@ -38,6 +38,7 @@ mlflow = "^3.4.0"
 himalaya = "^0.4.8"
 open-clip-torch = "^2.24.0"
 peft = "^0.17.1"
+hydra-core = "^1.3.2"
 
 [tool.poetry.group.dev.dependencies]
 toml = "^0.10.2"
