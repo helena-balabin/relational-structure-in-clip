@@ -10,7 +10,7 @@ import pandas as pd
 import pytest
 import torch
 from himalaya.backend import set_backend
-from relationalstructureinclip.models.probe_clip_graph_properties import (
+from relationalstructureinclip.models.probing.probe_clip_graph_properties import (
     DataSplitter,
     ProbeResult,
     ProbeTrainer,
@@ -508,7 +508,7 @@ class TestIntegration:
         mock_compute_embeddings.return_value = (np.random.randn(10, 16), np.random.randn(10, 16))
 
         from omegaconf import DictConfig
-        from relationalstructureinclip.models.probe_clip_graph_properties import main
+        from relationalstructureinclip.models.probing.probe_clip_graph_properties import main
         
         # Create minimal config
         cfg = DictConfig({

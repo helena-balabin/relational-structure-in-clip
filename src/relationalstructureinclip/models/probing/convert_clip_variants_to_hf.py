@@ -347,11 +347,7 @@ def convert_laclip_to_hf(cfg: ConvertConfig) -> Tuple[CLIPModel, CLIPProcessor]:
     return hf_clip_model, hf_clip_processor
 
 
-@hydra.main(
-	version_base="1.3",
-	config_path=str(Path(__file__).resolve().parents[3] / "config" / "models"),
-	config_name="convert_clip_variants_to_hf",
-)
+@hydra.main(config_path="../../../../config/model", config_name="convert_clip_variants_to_hf")
 def main(cfg: DictConfig) -> None:
     """Main entry point for conversion script."""
 

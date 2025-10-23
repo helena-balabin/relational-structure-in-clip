@@ -8,7 +8,6 @@ import hydra
 import mlflow
 import torch
 from datasets import load_dataset
-from dotenv import load_dotenv
 from omegaconf import DictConfig
 from PIL import Image
 from torch.optim import AdamW
@@ -22,9 +21,9 @@ from transformers import (
     TrainingArguments,
 )
 
-from ..data.preprocess_graphormer import GraphCLIPDataCollator, preprocess_item
-from .graph_clip_model.configuration_graph_clip import GraphCLIPConfig
-from .graph_clip_model.modeling_graph_clip import GraphCLIPModel, LossLoggingCallback
+from ...data.preprocess_graphormer import GraphCLIPDataCollator, preprocess_item
+from .configuration_graph_clip import GraphCLIPConfig
+from .modeling_graph_clip import GraphCLIPModel, LossLoggingCallback
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -371,15 +370,13 @@ def train_single_graph_model(cfg: DictConfig, graph_type: str) -> Tuple[GraphCLI
         return model, trainer
 
 
-@hydra.main(config_path="../../../config/model", config_name="pretrain_graph_clip")
+@hydra.main(config_path="../../../../config/model", config_name="pretrain_graph_clip")
 def train_graph_image_model(cfg: DictConfig):
     """Train GraphCLIP models for different graph types as specified in the config.
     
     Args:
         cfg (DictConfig): Hydra configuration dictionary containing training parameters.
     """
-    # Load environment variables
-    load_dotenv("../../../.env")
     # Initialize MLflow
     mlflow.set_tracking_uri(cfg.mlflow.tracking_uri)
     mlflow.set_experiment(cfg.mlflow.experiment_name)
