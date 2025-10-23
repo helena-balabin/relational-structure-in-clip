@@ -53,7 +53,7 @@ def generate_captions(cfg: DictConfig):
         ).to(device, torch.float16)
         
         input_ids_length = inputs.input_ids.shape[1]
-        generated_ids = model.generate(**inputs, max_new_tokens=500)
+        generated_ids = model.generate(**inputs, max_new_tokens=cfg.max_new_tokens)
         
         # Slice the generated IDs to exclude the prompt
         generated_ids = generated_ids[:, input_ids_length:]

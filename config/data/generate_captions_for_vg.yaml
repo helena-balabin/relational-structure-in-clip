@@ -6,6 +6,7 @@ prompt: "Question: What are five captions for this image? Answer:"
 dataset_name: "helena-balabin/vg_for_graphormer"
 data_cache_dir: "/data/huggingface/datasets"
 split: "train"
+max_new_tokens: 200
 
 vg_dir: "/data/vg/VG_100K"
 output_dataset_path: "/data/huggingface/datasets/vg_captions"
