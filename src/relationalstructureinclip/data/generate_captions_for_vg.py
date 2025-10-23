@@ -17,7 +17,7 @@ def get_image_path(vg_url: str, vg_dir: str) -> Path:
 
 @hydra.main(
     version_base=None,
-    config_path="../../../../config/data",
+    config_path="../../../config/data",
     config_name="generate_captions_for_vg",
 )
 def generate_captions(cfg: DictConfig):
