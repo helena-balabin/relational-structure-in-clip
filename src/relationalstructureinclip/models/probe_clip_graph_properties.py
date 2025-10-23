@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import warnings
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -205,6 +206,16 @@ def _get_graph_metric(graph_dict, key):
 	return graph_dict.get(key, 0)
 
 
+def _load_image(img_path):
+	"""Load a single image, with a fallback for errors."""
+	try:
+		return Image.open(img_path).convert('RGB')
+	except Exception as e:
+		logger.warning("Failed to load image %s: %s", img_path, e)
+		# Return a blank image as a fallback
+		return Image.new('RGB', (224, 224), color='black')
+
+
 def _compute_clip_embeddings(model_id, texts, image_paths, model_cache_dir, batch_size=64):
 	"""Compute CLIP-like text and vision embeddings separately."""
 	device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -214,38 +225,34 @@ def _compute_clip_embeddings(model_id, texts, image_paths, model_cache_dir, batc
 
 	all_text_embeddings = []
 	all_image_embeddings = []
-	for i in tqdm(range(0, len(texts), batch_size), desc=f"Computing embeddings for {model_id}"):
-		batch_texts = texts[i:i + batch_size]
-		batch_image_paths = image_paths[i:i + batch_size]
-		
-		# Load images
-		batch_images = []
-		for img_path in batch_image_paths:
-			try:
-				img = Image.open(img_path).convert('RGB')
-				batch_images.append(img)
-			except Exception as e:
-				logger.warning("Failed to load image %s: %s", img_path, e)
-				# Use a blank image as fallback
-				batch_images.append(Image.new('RGB', (224, 224), color='black'))
-		
-		# Process text and images
-		text_inputs = processor(text=batch_texts, return_tensors="pt", padding=True, truncation=True)
-		image_inputs = processor(images=batch_images, return_tensors="pt")
-		
-		text_inputs = {k: v.to(device) for k, v in text_inputs.items()}
-		image_inputs = {k: v.to(device) for k, v in image_inputs.items()}
-		
-		with torch.no_grad():
-			# Get text embeddings
-			text_embeddings = model.get_text_features(**text_inputs)
+
+	# Use a ThreadPoolExecutor for parallel image loading
+	with ThreadPoolExecutor() as executor:
+		for i in tqdm(range(0, len(texts), batch_size), desc=f"Computing embeddings for {model_id}"):
+			batch_texts = texts[i:i + batch_size]
+			batch_image_paths = image_paths[i:i + batch_size]
 			
-			# Get image embeddings
-			image_embeddings = model.get_image_features(**image_inputs)
+			# Load images in parallel
+			batch_images = list(executor.map(_load_image, batch_image_paths))
 			
-			# Store embeddings separately
-			all_text_embeddings.append(text_embeddings.cpu().numpy())
-			all_image_embeddings.append(image_embeddings.cpu().numpy())
+			# Process text and images
+			text_inputs = processor(text=batch_texts, return_tensors="pt", padding=True, truncation=True)
+			image_inputs = processor(images=batch_images, return_tensors="pt")
+			
+			text_inputs = {k: v.to(device) for k, v in text_inputs.items()}
+			image_inputs = {k: v.to(device) for k, v in image_inputs.items()}
+			
+			# Use autocast for mixed-precision inference if on CUDA
+			with torch.no_grad(), torch.cuda.amp.autocast(enabled=torch.cuda.is_available()):
+				# Get text embeddings
+				text_embeddings = model.get_text_features(**text_inputs)
+				
+				# Get image embeddings
+				image_embeddings = model.get_image_features(**image_inputs)
+				
+				# Store embeddings separately
+				all_text_embeddings.append(text_embeddings.cpu().numpy())
+				all_image_embeddings.append(image_embeddings.cpu().numpy())
 	
 	return np.vstack(all_text_embeddings), np.vstack(all_image_embeddings)
 
