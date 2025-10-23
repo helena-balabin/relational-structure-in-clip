@@ -274,12 +274,19 @@ def create_grouped_bar_plots(data: Dict[str, Dict[str, pd.DataFrame]], cfg: Visu
         ax.grid(axis='y', alpha=0.3)
         ax.set_axisbelow(True)
         
-        # Add legend only to the last subplot to avoid clutter
-        if i == n_metrics - 1:
-            ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left', 
-                     fontsize=cfg.legend_fontsize)
+    # Add a single legend for the entire figure
+    handles, labels = axes[0].get_legend_handles_labels()
+    fig.legend(
+        handles,
+        labels,
+        loc="lower center",
+        bbox_to_anchor=(0.5, -0.1),
+        ncol=len(labels),
+        fontsize=cfg.legend_fontsize,
+    )
+
+    fig.tight_layout(rect=[0, 0.1, 1, 0.96])
     
-    plt.tight_layout()
     return fig
 
 
