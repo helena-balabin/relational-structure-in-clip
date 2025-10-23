@@ -40,7 +40,7 @@ def generate_captions(cfg: DictConfig):
 
     def add_captions_batch(batch):
         images = []
-        for vg_url in batch["vg_url"]:
+        for vg_url in batch["url"]:
             image_path = get_image_path(vg_url, cfg.vg_dir)
             if not image_path.exists():
                 logging.warning(f"Image not found: {image_path}")
