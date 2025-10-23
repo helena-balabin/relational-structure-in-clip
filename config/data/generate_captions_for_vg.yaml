@@ -1,0 +1,10 @@
+model_name: "Salesforce/blip2-opt-2.7b"
+
+prompt: "Write five COCO-style captions"
+
+dataset_name: "helena-balabin/vg_for_graphormer"
+split: "train"
+
+vg_dir: "/data/vg/VG_100K"
+output_dataset_path: "/data/huggingface/datasets/vg_captions"
+batch_size: 16
