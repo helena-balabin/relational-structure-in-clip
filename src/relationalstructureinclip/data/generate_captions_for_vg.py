@@ -70,7 +70,7 @@ def generate_captions(cfg: DictConfig):
     # Log some examples
     logging.info("--- Generated Caption Examples ---")
     for i in range(min(3, len(dataset))):
-        logging.info(f"Example for vg_id: {dataset[i]['vg_id']}")
+        logging.info(f"Example for image_id: {dataset[i]['image_id']}")
         for j, caption in enumerate(dataset[i]["captions"]):
             logging.info(f"  Caption {j + 1}: {caption}")
     logging.info("------------------------------------")
