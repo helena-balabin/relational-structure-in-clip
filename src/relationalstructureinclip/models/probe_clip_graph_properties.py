@@ -243,7 +243,7 @@ def _compute_clip_embeddings(model_id, texts, image_paths, model_cache_dir, batc
 			image_inputs = {k: v.to(device) for k, v in image_inputs.items()}
 			
 			# Use autocast for mixed-precision inference if on CUDA
-			with torch.no_grad(), torch.cuda.amp.autocast(enabled=torch.cuda.is_available()):
+			with torch.no_grad(), torch.amp.autocast(device_type="cuda" if torch.cuda.is_available() else "cpu"):
 				# Get text embeddings
 				text_embeddings = model.get_text_features(**text_inputs)
 				
