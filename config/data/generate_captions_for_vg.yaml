@@ -1,8 +1,10 @@
 model_name: "Salesforce/blip2-opt-2.7b"
+model_cache_dir: "/data/huggingface/transformers"
 
 prompt: "Write five COCO-style captions"
 
 dataset_name: "helena-balabin/vg_for_graphormer"
+data_cache_dir: "/data/huggingface/datasets"
 split: "train"
 
 vg_dir: "/data/vg/VG_100K"

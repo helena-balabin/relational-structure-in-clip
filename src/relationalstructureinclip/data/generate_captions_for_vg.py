@@ -25,14 +25,16 @@ def generate_captions(cfg: DictConfig):
     logging.basicConfig(level=logging.INFO)
 
     # Load the dataset
-    dataset = load_dataset(cfg.dataset_name, split=cfg.split)
+    dataset = load_dataset(cfg.dataset_name, split=cfg.split, cache_dir=cfg.data_cache_dir)
     dataset = dataset.filter(lambda x: x["coco_id"] is None)
 
     # Load the model and processor
     device = "cuda" if torch.cuda.is_available() else "cpu"
     processor = Blip2Processor.from_pretrained(cfg.model_name)
     model = Blip2ForConditionalGeneration.from_pretrained(
-        cfg.model_name, torch_dtype=torch.float16
+        cfg.model_name,
+        torch_dtype=torch.float16,
+        cache_dir=cfg.model_cache_dir,
     )
     model.to(device)
 
