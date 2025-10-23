@@ -12,7 +12,7 @@ from transformers import Blip2ForConditionalGeneration, Blip2Processor
 
 def get_image_path(vg_url: str, vg_dir: str) -> Path:
     """Get the image path from the vg_url and vg_dir."""
-    return Path(vg_dir) / vg_url.split("/")[-2] / vg_url.split("/")[-1]
+    return Path(vg_dir) / vg_url.split("/")[-1]
 
 
 @hydra.main(
