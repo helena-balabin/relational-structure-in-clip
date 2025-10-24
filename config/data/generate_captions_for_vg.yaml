@@ -1,13 +1,18 @@
-model_name: "Salesforce/blip2-opt-2.7b"
+model_name: "Salesforce/blip-image-captioning-base"
 model_cache_dir: "/data/huggingface/transformers"
-
-prompt: "Question: What are five captions for this image? Answer:"
 
 dataset_name: "helena-balabin/vg_for_graphormer"
 data_cache_dir: "/data/huggingface/datasets"
 split: "train"
-max_new_tokens: 200
+max_new_tokens: 50
+n_captions: 5
+
+top_k: 50  # Top-k sampling
+top_p: 0.9  # Top-p (nucleus) sampling
+temperature: 1.0  # Temperature for diversity
 
 vg_dir: "/data/vg/VG_100K"
 output_dataset_path: "/data/huggingface/datasets/vg_captions"
 batch_size: 16
+
+n_examples: 20
