@@ -152,6 +152,9 @@ def preprocess_item(
     if keep_features and "node_feat" in item.keys():  # input_nodes
         node_feature = np.asarray(item["node_feat"], dtype=np.int64)
     else:
+        # Check if num_nodes is provided, else infer from edge_index
+        if "num_nodes" not in item:
+            item["num_nodes"] = int(np.max(item["edge_index"]) + 1)
         node_feature = np.ones((item["num_nodes"], 1), dtype=np.int64)  # same embedding for all
 
     edge_index = np.asarray(item["edge_index"], dtype=np.int64)
