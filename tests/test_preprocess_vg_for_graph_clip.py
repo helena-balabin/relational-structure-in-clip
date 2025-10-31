@@ -4,7 +4,7 @@ import pytest
 
 from datasets import Dataset
 
-from relationalstructureinclip.data.preprocess_vg_for_graphormer import flatten_captions
+from relationalstructureinclip.data.preprocess_vg_for_graph_clip import flatten_captions
 
 
 def test_flatten_captions_expands_each_caption() -> None:
