@@ -3,14 +3,26 @@
 import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+import os
+import time
 
 import hydra
 import networkx as nx
 import nltk
-from datasets import concatenate_datasets, Dataset, load_dataset
+import torch
+from datasets import (
+    concatenate_datasets,
+    Dataset,
+    load_dataset,
+    load_from_disk,
+)
 from nltk.corpus import wordnet as wn
 from omegaconf import DictConfig
+from torchvision.io import decode_image
 from tqdm import tqdm
+from transformers import CLIPProcessor
+
+from relationalstructureinclip.data.preprocess_graphormer import preprocess_item
 
 logging.getLogger("penman").setLevel(logging.ERROR)
 logger = logging.getLogger(__name__)
@@ -268,79 +280,226 @@ def calculate_graphormer_attributes(
     return {"edge_index": edge_index}
 
 
+def create_final_preprocessed_dataset(cfg: DictConfig):
+    """
+    Loads the intermediate dataset and performs the final, expensive preprocessing.
+
+    This includes loading images, running the CLIP processor, and preparing
+    graph tensors. The final dataset is saved to disk, ready for training.
+
+    Args:
+        cfg (DictConfig): Hydra configuration.
+    """
+    logger.info("\n" + "=" * 80)
+    logger.info("--- Stage 2: Final Offline Preprocessing ---")
+    logger.info("=" * 80)
+
+    # Initialize the CLIP processor
+    processor = CLIPProcessor.from_pretrained(
+        cfg.model.pretrained_model_name_or_path,
+        cache_dir=cfg.model.get("cache_dir", None),
+        use_fast=True,
+    )
+
+    # Load the intermediate dataset created in Stage 1
+    logger.info(f"Loading intermediate dataset from: {cfg.vg_processed_dir}")
+    intermediate_dataset = load_from_disk(dataset_path=cfg.vg_processed_dir)
+
+    # --- Main Preprocessing Function ---
+    def preprocess_function(examples):
+        # 1. Load and Process Images
+        images = []
+        for img_id in examples["image_id"]:
+            try:
+                image_path = os.path.join(cfg.image_base_path, f"{img_id}.jpg")
+                images.append(decode_image(image_path))
+            except Exception as e:
+                logger.error(f"Image not found: {e}. Make sure `image_base_path` is correct.")
+                # Append a blank image for missing images
+                images.append(
+                    torch.zeros(
+                        (3, 256, 256),
+                        dtype=torch.uint8,
+                    )
+                )
+            # Make sure all images are in RGB format
+            if images[-1].shape[0] != 3:
+                images[-1] = images[-1].repeat(3, 1, 1)
+
+        # Check if any of the text is None and replace with empty string
+        examples["sentences_raw"] = [text if text is not None else "" for text in examples["sentences_raw"]]
+
+        # 2. Process Text and Images with CLIPProcessor
+        # Print an example
+        processed = processor(
+            text=examples["sentences_raw"],
+            images=images,
+            return_tensors="pt",
+            padding="max_length",
+            truncation=True,
+        )
+
+        # 3. Process Graphs with Graphormer logic
+        # The graph data is already in a good format from Stage 1
+        # We just need to apply the final transformation via preprocess_item
+        graph_inputs = [
+            preprocess_item(ex, edge_max_dist=cfg.training.edge_max_dist, remove_extra_features=True)
+            for ex in examples["graph_input"]
+        ]
+        processed["graph_input"] = graph_inputs
+        return processed
+
+    # --- Apply Mapping for each graph type ---
+    graph_types = cfg.model.graph_types
+    for graph_type in graph_types:
+        logger.info("-" * 80)
+        logger.info(f"Processing final dataset for graph type: '{graph_type}'")
+        logger.info("-" * 80)
+
+        # Check if the graph column exists
+        if graph_type not in intermediate_dataset.column_names:
+            logger.warning(f"Could not find graph column '{graph_type}' for graph type '{graph_type}'. Skipping.")
+            continue
+
+        # Create a working copy and rename column for consistent processing
+        dset = intermediate_dataset.rename_column(graph_type, "graph_input")
+
+        logger.info("Applying final preprocessing map. This is the slowest step...")
+        start_time = time.time()
+
+        final_dataset = dset.map(
+            preprocess_function,
+            batched=True,
+            batch_size=cfg.preprocessing_batch_size,
+            num_proc=cfg.num_proc,
+            remove_columns=dset.column_names,
+            load_from_cache_file=not cfg.overwrite_cache,
+        )
+
+        end_time = time.time()
+        logger.info(f"-> Final preprocessing for '{graph_type}' finished in {end_time - start_time:.2f}s.")
+
+        # --- Save to Disk ---
+        save_path = os.path.join(cfg.preprocessed_output_path, f"processed-{graph_type.replace('_', '-')}")
+        logger.info(f"-> Saving final training-ready dataset to: {save_path}")
+        final_dataset.save_to_disk(save_path, num_proc=cfg.num_proc, max_shard_size=cfg.max_shard_size)
+
+        # --- Push to Hub (Optional) ---
+        if cfg.push_to_hub:
+            hub_id = f"{cfg.hf_dataset_identifier_processed}-{graph_type.replace('_', '-')}"
+            logger.info(f"-> Pushing dataset to Hugging Face Hub: {hub_id}")
+            final_dataset.push_to_hub(hub_id)
+
+
 @hydra.main(config_path="../../../config/data", config_name="preprocess_vg_for_graphormer")
 def preprocess_vg_for_graphormer(cfg: DictConfig) -> None:
     """
-    Preprocess VG data for the Graph Image Model.
+    Preprocess VG data in a two-stage process for the Graph Image Model.
+
+    Stage 1: Processes graph structures and text, saving an intermediate dataset.
+    Stage 2: Performs heavy image and tokenization processing on the intermediate
+        dataset, saving the final, training-ready version.
 
     Args:
         cfg (DictConfig): The configuration object loaded by Hydra.
     """
-    vg_metadata_dir = Path(cfg.vg_metadata_dir)
-
-    # Load VG metadata
-    vg_metadata = load_dataset(
-        cfg.vg_metadata_hf_identifier,
-        cache_dir=cfg.cache_dir,
-        split=cfg.vg_metadata_split,
-    )
-
-    # Preprocess the entire dataset
-    if cfg.include_image_graphs:
-        vg_objects_file = vg_metadata_dir / "objects.json"
-        vg_relationships_file = vg_metadata_dir / "relationships.json"
-        # Visual VerbNet is from the COCO actions dataset
-        vg_visual_verbs_file = vg_metadata_dir / "visual_verbnet_beta2015.json"
-        graphs, action_graphs, spatial_graphs = derive_image_graphs(
-            vg_objects_file=vg_objects_file,
-            vg_relationships_file=vg_relationships_file,
-            vg_visual_verbs_file=vg_visual_verbs_file,
-            cfg=cfg,
-            image_ids=vg_metadata[cfg.vg_image_id_col],
+    # --- Stage 1 Logic ---
+    # Decide whether to run Stage 1 locally or download from the Hub.
+    if cfg.get("load_stage_one_from_hub"):
+        logger.info("=" * 80)
+        logger.info("--- Skipping Stage 1: Loading intermediate dataset from Hugging Face Hub ---")
+        logger.info(f"Dataset ID: '{cfg.load_stage_one_from_hub}'")
+        
+        # Load the dataset from the hub and save it to the intermediate directory
+        # This ensures Stage 2 has a local copy to work with.
+        intermediate_dataset = load_dataset(
+            cfg.load_stage_one_from_hub,
+            cache_dir=cfg.cache_dir,
+            split="train"  # Assuming the main split is 'train'
         )
-        graphs = [graphs[img_id] for img_id in vg_metadata[cfg.vg_image_id_col]]  # type: ignore
-        action_graphs = [action_graphs[img_id] for img_id in vg_metadata[cfg.vg_image_id_col]]  # type: ignore
-        spatial_graphs = [spatial_graphs[img_id] for img_id in vg_metadata[cfg.vg_image_id_col]]  # type: ignore
-        # For each column, check if the column already exists, if so, remove it first
-        if "image_graphs" in vg_metadata.column_names:
-            vg_metadata = vg_metadata.remove_columns("image_graphs")
-        if "action_image_graphs" in vg_metadata.column_names:
-            vg_metadata = vg_metadata.remove_columns("action_image_graphs")
-        if "spatial_image_graphs" in vg_metadata.column_names:
-            vg_metadata = vg_metadata.remove_columns("spatial_image_graphs")
-        vg_metadata = vg_metadata.add_column(name="image_graphs", column=graphs)
-        vg_metadata = vg_metadata.add_column(name="action_image_graphs", column=action_graphs)
-        vg_metadata = vg_metadata.add_column(name="spatial_image_graphs", column=spatial_graphs)
+        logger.info(f"-> Saving intermediate dataset to local path: {cfg.vg_processed_dir}")
+        intermediate_dataset.save_to_disk(cfg.vg_processed_dir, num_proc=cfg.num_proc)
+        logger.info("Intermediate dataset successfully downloaded and saved locally.")
+        logger.info("=" * 80)
 
-    # Flatten captions
-    vg_metadata = flatten_captions(vg_metadata, caption_column=cfg.vg_captions_column)
-    # Print some examples after flattening
-    for i in range(3):
-        logger.info(f"Example {i} captions: {vg_metadata[i]['sentences_raw']}")
+    else:
+        logger.info("=" * 80)
+        logger.info("--- Stage 1: Intermediate Preprocessing (Graphs and Text) ---")
+        logger.info("=" * 80)
+        vg_metadata_dir = Path(cfg.vg_metadata_dir)
 
-    # Use the other VG-coco overlap, too, put it onto this processed dataset
-    vg_coco = load_dataset(
-        cfg.vg_coco_overlap_hf_identifier,
-        cache_dir=cfg.cache_dir,
-        split=cfg.vg_coco_split,
-    )
-    # Filter by COCO ID not null
-    vg_coco = vg_coco.filter(lambda x: [ex is not None for ex in x[cfg.vg_coco_column]], batched=True, num_proc=cfg.num_proc)
+        # Load VG metadata
+        logger.info(f"Loading VG metadata from Hugging Face: '{cfg.vg_metadata_hf_identifier}'")
+        vg_metadata = load_dataset(
+            cfg.vg_metadata_hf_identifier,
+            cache_dir=cfg.cache_dir,
+            split=cfg.vg_metadata_split,
+        )
 
-    # Concatenate the two datasets, first look at the overlapping columns
-    overlapping_columns = set(vg_metadata.column_names).intersection(set(vg_coco.column_names))
-    vg_coco = vg_coco.remove_columns([col for col in vg_coco.column_names if col not in overlapping_columns])
-    vg_metadata = vg_metadata.remove_columns(
-        [col for col in vg_metadata.column_names if col not in overlapping_columns]
-    )
-    vg_complete = concatenate_datasets([vg_metadata, vg_coco])
-    # Shuffle the dataset
-    vg_complete = vg_complete.shuffle(seed=cfg.seed)
+        # Preprocess the entire dataset
+        if cfg.include_image_graphs:
+            vg_objects_file = vg_metadata_dir / "objects.json"
+            vg_relationships_file = vg_metadata_dir / "relationships.json"
+            # Visual VerbNet is from the COCO actions dataset
+            vg_visual_verbs_file = vg_metadata_dir / "visual_verbnet_beta2015.json"
+            graphs, action_graphs, spatial_graphs = derive_image_graphs(
+                vg_objects_file=vg_objects_file,
+                vg_relationships_file=vg_relationships_file,
+                vg_visual_verbs_file=vg_visual_verbs_file,
+                cfg=cfg,
+                image_ids=vg_metadata[cfg.vg_image_id_col],
+            )
+            graphs = [graphs[img_id] for img_id in vg_metadata[cfg.vg_image_id_col]]  # type: ignore
+            action_graphs = [action_graphs[img_id] for img_id in vg_metadata[cfg.vg_image_id_col]]  # type: ignore
+            spatial_graphs = [spatial_graphs[img_id] for img_id in vg_metadata[cfg.vg_image_id_col]]  # type: ignore
+            # For each column, check if the column already exists, if so, remove it first
+            if "image_graphs" in vg_metadata.column_names:
+                vg_metadata = vg_metadata.remove_columns("image_graphs")
+            if "action_image_graphs" in vg_metadata.column_names:
+                vg_metadata = vg_metadata.remove_columns("action_image_graphs")
+            if "spatial_image_graphs" in vg_metadata.column_names:
+                vg_metadata = vg_metadata.remove_columns("spatial_image_graphs")
+            vg_metadata = vg_metadata.add_column(name="image_graphs", column=graphs)
+            vg_metadata = vg_metadata.add_column(name="action_image_graphs", column=action_graphs)
+            vg_metadata = vg_metadata.add_column(name="spatial_image_graphs", column=spatial_graphs)
 
-    # TODO make sure the text is there! 
+        # Flatten captions
+        logger.info("Flattening captions...")
+        vg_metadata = flatten_captions(vg_metadata, caption_column=cfg.vg_captions_column)
+        # Print some examples after flattening
+        logger.info("Example captions after flattening:")
+        for i in range(3):
+            logger.info(f"  - Example {i}: {vg_metadata[i]['sentences_raw']}")
 
-    # Save the preprocessed dataset locally
-    vg_complete.save_to_disk(cfg.vg_processed_dir)
+        # Use the other VG-coco overlap, too, put it onto this processed dataset
+        logger.info(f"Loading and merging with VG-COCO overlap: '{cfg.vg_coco_overlap_hf_identifier}'")
+        vg_coco = load_dataset(
+            cfg.vg_coco_overlap_hf_identifier,
+            cache_dir=cfg.cache_dir,
+            split=cfg.vg_coco_split,
+        )
+        # Filter by COCO ID not null
+        vg_coco = vg_coco.filter(lambda x: [ex is not None for ex in x[cfg.vg_coco_column]], batched=True, num_proc=cfg.num_proc)
+
+        # Concatenate the two datasets, first look at the overlapping columns
+        overlapping_columns = set(vg_metadata.column_names).intersection(set(vg_coco.column_names))
+        vg_coco = vg_coco.remove_columns([col for col in vg_coco.column_names if col not in overlapping_columns])
+        vg_metadata = vg_metadata.remove_columns(
+            [col for col in vg_metadata.column_names if col not in overlapping_columns]
+        )
+        vg_complete = concatenate_datasets([vg_metadata, vg_coco])
+        logger.info(f"Combined dataset has {len(vg_complete)} samples. Shuffling...")
+        # Shuffle the dataset
+        vg_complete = vg_complete.shuffle(seed=cfg.seed)
+
+        # Save the intermediate preprocessed dataset locally
+        logger.info(f"-> Saving intermediate dataset to: {cfg.vg_processed_dir}")
+        vg_complete.save_to_disk(cfg.vg_processed_dir)
+        logger.info("Stage 1 finished successfully.")
+
+    # --- Trigger Stage 2 ---
+    create_final_preprocessed_dataset(cfg)
+    logger.info("Stage 2 finished. All graph types processed successfully!")
 
 
 if __name__ == "__main__":
