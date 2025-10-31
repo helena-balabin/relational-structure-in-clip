@@ -2,14 +2,12 @@
 
 import logging
 import os
-from typing import Tuple
 
 import hydra
 import mlflow
 import torch
-from datasets import load_dataset
+from datasets import load_from_disk
 from omegaconf import DictConfig
-from PIL import Image
 from torch.optim import AdamW
 from transformers import (
     AutoConfig,
@@ -21,47 +19,12 @@ from transformers import (
     TrainingArguments,
 )
 
-from ...data.preprocess_graphormer import GraphCLIPDataCollator, preprocess_item
-from .configuration_graph_clip import GraphCLIPConfig
-from .modeling_graph_clip import GraphCLIPModel, LossLoggingCallback
+from relationalstructureinclip.models.graph_clip_model.collator_graph_clip import GraphCLIPDataCollator
+from relationalstructureinclip.models.graph_clip_model.configuration_graph_clip import GraphCLIPConfig
+from relationalstructureinclip.models.graph_clip_model.modeling_graph_clip import GraphCLIPModel, LossLoggingCallback
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-
-def preprocess_dataset(dataset, processor, cfg):
-    """Preprocess the dataset with image, text, and graph inputs.
-    
-    Args:
-        dataset: The dataset to preprocess.
-        processor: The CLIP processor for image and text preprocessing.
-        cfg: Configuration dictionary with preprocessing parameters.
-    """
-    # Preprocess the dataset
-    def preprocess_function(example):
-        # Preprocess image and text
-        processed = processor(
-            text=example["sentences_raw"],
-            images=[
-                Image.open(os.path.join(cfg.data.image_base_path, str(img) + ".jpg")) for img in example["image_id"]
-            ],
-            return_tensors="pt",
-            padding="max_length",
-            truncation=True,
-        )
-        # Preprocess graph input
-        graph_input = [preprocess_item(ex, edge_max_dist=cfg.training.edge_max_dist) for ex in example["graph_input"]]
-        processed["graph_input"] = graph_input
-        return processed
-
-    # Apply preprocessing
-    dataset = dataset.map(
-        preprocess_function,
-        batched=True,
-        num_proc=cfg.data.num_proc,
-        batch_size=cfg.data.batch_size,
-    )
-    return dataset
 
 
 class WarmupGradualUnfreezeCallback(TrainerCallback):
@@ -185,192 +148,7 @@ def build_optimizer(model, cfg):
     return optimizer
 
 
-def train_single_graph_model(cfg: DictConfig, graph_type: str) -> Tuple[GraphCLIPModel, Trainer]:
-    """Train a single model for a specific graph type.
-    
-    Args:
-        cfg (DictConfig): Hydra configuration dictionary containing training parameters.
-        graph_type (str): The type of graph to train the model on.
-    Returns:
-        model: The trained GraphCLIP model.
-        trainer: The Trainer object used for training.
-    """
-    # Initialize the processor
-    clip_processor = CLIPProcessor.from_pretrained(cfg.model.pretrained_model_name_or_path)
-
-    # Define the target graph column based on the graph type
-    target_graph_column = f"{graph_type}_graphs"
-
-    with mlflow.start_run(run_name=f"GraphCLIP_{graph_type}"):
-        # Log configuration and graph type
-        cfg_without_output_dir = cfg.copy()
-        if "output_dir" in cfg_without_output_dir:
-            del cfg_without_output_dir.output_dir
-        mlflow.log_params(cfg_without_output_dir)
-        mlflow.log_param("current_graph_type", graph_type)
-
-        # Load preprocessed data
-        if cfg.data.use_preprocessed:
-            dataset = load_dataset(
-                cfg.data.hf_dataset_identifier_processed + "_" + target_graph_column,
-                split=cfg.data.split,
-                cache_dir=cfg.data.cache_dir,
-            )
-        else:
-            # Apply some preprocessing to the dataset
-            dataset = load_dataset(
-                cfg.data.hf_dataset_identifier,
-                split=cfg.data.split,
-                cache_dir=cfg.data.cache_dir,
-            )
-            # Filter out data with no text data
-            dataset = dataset.filter(lambda x: x["sentences_raw"] is not None and len(x["sentences_raw"]) > 0)
-
-            # Only keep the graph type column specified by graph_type, remove all other
-            # columns that contain "_graphs"
-            dataset = dataset.remove_columns(
-                [col for col in dataset.column_names if col.endswith("_graphs") and col != target_graph_column]
-            )
-            # Rename the target graph column to "graph_input"
-            dataset = dataset.rename_column(target_graph_column, "graph_input")
-            len_dataset_pre = len(dataset)
-            # Filter out data with empty graphs: num_nodes == 0 or edge_index == [[], []]
-            dataset = dataset.filter(
-                lambda x: x["graph_input"]["num_nodes"] > 0 or x["graph_input"]["edge_index"] != [[], []]
-            )
-            # Log the number of samples in the dataset after filtering
-            mlflow.log_param("empty_graphs_ratio", 1 - len(dataset) / len_dataset_pre)
-            # Make sure the dataset is shuffled
-            dataset = dataset.shuffle(seed=cfg.data.seed)
-
-            # For debug purposes, limit the number of samples
-            if cfg.data.n_samples > 0:
-                dataset = dataset.select(range(cfg.data.n_samples))
-
-            # Preprocess the dataset
-            dataset = preprocess_dataset(dataset, clip_processor, cfg)
-            # Push it to the huggingface hub
-            if cfg.data.push_to_hub:
-                dataset.push_to_hub(cfg.data.hf_dataset_identifier_processed + "_" + target_graph_column)
-
-        # Log the number of samples in the dataset
-        mlflow.log_param("len_dataset", len(dataset))
-
-        # Set a validation set aside
-        dataset = dataset.train_test_split(test_size=cfg.data.validation_split, seed=cfg.data.seed)
-        # Not to be confused with the train/test split from the load_dataset function
-        train_dataset = dataset["train"]
-        validation_dataset = dataset["test"]
-
-        # Create a configuration for the GraphCLIP Model
-        if cfg.model.graphormer_size == "small":
-            graphormer_config = GraphormerConfig(
-                hidden_size=512,
-                embedding_dim=512,
-                ffn_embedding_dim=512,
-                num_hidden_layers=6,
-                dropout=cfg.model.dropout,
-            )
-        else:
-            graphormer_config = GraphormerConfig(
-                dropout=cfg.model.dropout,
-            )
-
-        config = GraphCLIPConfig(
-            graph_config=graphormer_config,
-            graph_pair_type=cfg.model.model_type,
-            pretrained_model_name_or_path=cfg.model.pretrained_model_name_or_path,
-            alpha=cfg.model.alpha,
-        )
-
-        # Initialize the model
-        model = GraphCLIPModel(config)
-        model.to("cuda" if torch.cuda.is_available() else "cpu")
-
-        # Enable cuDNN/TF32 fast paths
-        try:
-            torch.backends.cudnn.benchmark = True
-            torch.backends.cuda.matmul.allow_tf32 = True
-            torch.set_float32_matmul_precision("high")
-        except Exception:
-            pass
-
-        # Build optimizer with layer-wise decay (scheduler handled by HF Trainer)
-        optimizer = build_optimizer(model, cfg)
-
-        # Register the model and config to AutoClass
-        AutoConfig.register("graph_clip", GraphCLIPConfig)
-        AutoModel.register(GraphCLIPConfig, GraphCLIPModel)
-        GraphCLIPConfig.register_for_auto_class()
-        GraphCLIPModel.register_for_auto_class("AutoModel")
-
-        warmup_ratio = getattr(cfg.training, "warmup_ratio", 0.05)
-        warmup_ratio_unfreeze = getattr(cfg.training, "warmup_ratio_unfreeze", 0.5)
-        use_bf16 = (cfg.training.precision == "bf16") and torch.cuda.is_available()
-        use_fp16 = (cfg.training.precision == "fp16") and torch.cuda.is_available()
-        training_args = TrainingArguments(
-            output_dir=os.path.join(cfg.output_dir, f"graph_clip_{graph_type}"),
-            eval_strategy="steps",
-            eval_steps=cfg.training.eval_steps,
-            save_strategy="steps",
-            save_steps=cfg.training.save_steps,
-            learning_rate=cfg.training.learning_rate,
-            per_device_train_batch_size=cfg.training.batch_size,
-            per_device_eval_batch_size=cfg.training.batch_size,
-            num_train_epochs=cfg.training.epochs,
-            dataloader_num_workers=cfg.data.dataloader_num_workers,
-            dataloader_persistent_workers=cfg.training.persistent_workers,
-            dataloader_pin_memory=cfg.training.pin_memory,
-            weight_decay=cfg.training.weight_decay,
-            logging_dir=os.path.join(cfg.output_dir, f"graph_clip_{graph_type}", "logs"),
-            logging_steps=cfg.training.logging_steps,
-            save_total_limit=cfg.training.save_total_limit,
-            load_best_model_at_end=True,
-            metric_for_best_model="eval_loss",
-            greater_is_better=False,
-            lr_scheduler_type="cosine",
-            warmup_ratio=warmup_ratio,
-            max_grad_norm=1.0,
-            report_to=["mlflow"],
-            bf16=use_bf16,
-            fp16=use_fp16,
-            remove_unused_columns=False,
-        )
-
-        warmup_steps = int(warmup_ratio_unfreeze * (len(dataset["train"]) / (cfg.training.batch_size)))
-        gradual_cb = WarmupGradualUnfreezeCallback(
-            model=model,
-            cfg=cfg,
-            warmup_steps=warmup_steps,
-        )
-
-        trainer = Trainer(
-            model=model,
-            args=training_args,
-            train_dataset=train_dataset,
-            eval_dataset=validation_dataset,
-            data_collator=GraphCLIPDataCollator(
-                on_the_fly_processing=False,
-                edge_max_dist=cfg.training.edge_max_dist,
-            ),
-            optimizers=(optimizer, None),
-            callbacks=[gradual_cb, LossLoggingCallback()],
-        )
-
-        # Train the model
-        trainer.train()
-
-        # Save and push the final model
-        model_save_path = os.path.join(cfg.output_dir, f"graph_clip_model_{graph_type}")
-        model.push_to_hub(cfg.model.huggingface_hub_model_id + "-" + graph_type.replace("_", "-"))
-        # Also push the processor
-        clip_processor.push_to_hub(cfg.model.huggingface_hub_model_id + "-" + graph_type.replace("_", "-"))
-        trainer.save_model(model_save_path)
-
-        return model, trainer
-
-
-@hydra.main(config_path="../../../../config/model", config_name="pretrain_graph_clip")
+@hydra.main(config_path="../../../../config/models", config_name="pretrain_graph_clip")
 def train_graph_image_model(cfg: DictConfig):
     """Train GraphCLIP models for different graph types as specified in the config.
     
@@ -387,6 +165,12 @@ def train_graph_image_model(cfg: DictConfig):
     logger.info(f"Training models for graph types: {graph_types}")
 
     trained_models = {}
+    # Initialize the processor
+    clip_processor = CLIPProcessor.from_pretrained(
+        cfg.model.pretrained_model_name_or_path,
+        cache_dir=cfg.model.get("cache_dir", None),
+        use_fast=True,
+    )
 
     # Train a separate model for each graph type
     for graph_type in graph_types:
@@ -394,9 +178,142 @@ def train_graph_image_model(cfg: DictConfig):
         logger.info(f"Training model for graph type: {graph_type}")
         logger.info(f"{'=' * 50}")
 
-        model, trainer = train_single_graph_model(cfg, graph_type)
-        trained_models[graph_type] = {"model": model, "trainer": trainer}
-        logger.info(f"✓ Successfully trained model for {graph_type}")
+        # Define the target graph column based on the graph type
+        target_graph_column = f"{graph_type}_graphs"
+
+        with mlflow.start_run(run_name=f"GraphCLIP_{graph_type}"):
+            # Log configuration and graph type
+            cfg_without_output_dir = cfg.copy()
+            if "output_dir" in cfg_without_output_dir:
+                del cfg_without_output_dir.output_dir
+            mlflow.log_params(cfg_without_output_dir)
+            mlflow.log_param("current_graph_type", graph_type)
+
+            # TODO if the model is still slow use the faster Graphormer implementation
+            # Load preprocessed data
+            dataset = load_from_disk(
+                cfg.data.local_dataset_identifier_processed + "-" + target_graph_column.replace("_", "-")
+            )
+            # Remove the columns from cfg.data.remove_columns if they exist
+            if hasattr(cfg.data, "remove_columns"):
+                cols_to_remove = [col for col in cfg.data.remove_columns if col in dataset.column_names]
+                if cols_to_remove:
+                    dataset = dataset.remove_columns(cols_to_remove)
+            # TODO subset the data based on split?
+
+            # Log the number of samples in the dataset
+            mlflow.log_param("len_dataset", len(dataset))
+
+            # Set a validation set aside
+            dataset = dataset.train_test_split(test_size=cfg.data.validation_split, seed=cfg.data.seed)
+            # Not to be confused with the train/test split from the load_dataset function
+            train_dataset = dataset["train"]
+            validation_dataset = dataset["test"]
+            # Shuffle the datasets only once train/validation split is done
+            train_dataset = train_dataset.shuffle(seed=cfg.data.seed)
+            validation_dataset = validation_dataset.shuffle(seed=cfg.data.seed)
+
+            # Create a configuration for the GraphCLIP Model
+            if cfg.model.graphormer_size == "small":
+                graphormer_config = GraphormerConfig(
+                    hidden_size=512,
+                    embedding_dim=512,
+                    ffn_embedding_dim=512,
+                    num_hidden_layers=6,
+                    dropout=cfg.model.dropout,
+                )
+            else:
+                graphormer_config = GraphormerConfig(
+                    dropout=cfg.model.dropout,
+                )
+
+            config = GraphCLIPConfig(
+                graph_config=graphormer_config,
+                graph_pair_type=cfg.model.model_type,
+                pretrained_model_name_or_path=cfg.model.pretrained_model_name_or_path,
+                alpha=cfg.model.alpha,
+                cache_dir=cfg.model.get("cache_dir", None),
+            )
+
+            # Initialize the model
+            model = GraphCLIPModel(config)
+            model.to("cuda" if torch.cuda.is_available() else "cpu")
+
+            # TODO change?
+            # Build optimizer with layer-wise decay (scheduler handled by HF Trainer)v
+            optimizer = build_optimizer(model, cfg)
+
+            # Register the model and config to AutoClass
+            AutoConfig.register("graph_clip", GraphCLIPConfig)
+            AutoModel.register(GraphCLIPConfig, GraphCLIPModel)
+            GraphCLIPConfig.register_for_auto_class()
+            GraphCLIPModel.register_for_auto_class("AutoModel")
+
+            warmup_ratio = getattr(cfg.training, "warmup_ratio", 0.05)
+            warmup_ratio_unfreeze = getattr(cfg.training, "warmup_ratio_unfreeze", 0.5)
+            use_bf16 = (cfg.training.precision == "bf16") and torch.cuda.is_available()
+            use_fp16 = (cfg.training.precision == "fp16") and torch.cuda.is_available()
+            training_args = TrainingArguments(
+                output_dir=os.path.join(cfg.output_dir, f"graph-clip-{graph_type}"),
+                eval_strategy="steps",
+                eval_steps=cfg.training.eval_steps,
+                save_strategy="steps",
+                save_steps=cfg.training.save_steps,
+                learning_rate=cfg.training.learning_rate,
+                per_device_train_batch_size=cfg.training.batch_size,
+                per_device_eval_batch_size=cfg.training.batch_size,
+                num_train_epochs=cfg.training.epochs,
+                dataloader_num_workers=cfg.data.dataloader_num_workers,
+                dataloader_persistent_workers=cfg.training.persistent_workers,
+                dataloader_pin_memory=cfg.training.pin_memory,
+                weight_decay=cfg.training.weight_decay,
+                logging_dir=os.path.join(cfg.output_dir, f"graph-clip-{graph_type}", "logs"),
+                logging_steps=cfg.training.logging_steps,
+                save_total_limit=cfg.training.save_total_limit,
+                load_best_model_at_end=True,
+                metric_for_best_model="eval_loss",
+                greater_is_better=False,
+                lr_scheduler_type="cosine",
+                warmup_ratio=warmup_ratio,
+                max_grad_norm=1.0,
+                report_to=["mlflow"],
+                bf16=use_bf16,
+                fp16=use_fp16,
+                remove_unused_columns=False,
+            )
+
+            warmup_steps = int(warmup_ratio_unfreeze * (len(dataset["train"]) / (cfg.training.batch_size)))
+            gradual_cb = WarmupGradualUnfreezeCallback(
+                model=model,
+                cfg=cfg,
+                warmup_steps=warmup_steps,
+            )
+
+            trainer = Trainer(
+                model=model,
+                args=training_args,
+                train_dataset=train_dataset,
+                eval_dataset=validation_dataset,
+                data_collator=GraphCLIPDataCollator(
+                    on_the_fly_processing=False,
+                    edge_max_dist=cfg.training.edge_max_dist,
+                    device="cuda" if torch.cuda.is_available() else "cpu",
+                ),
+                optimizers=(optimizer, None),
+                callbacks=[gradual_cb, LossLoggingCallback()],
+            )
+            # Train the model
+            trainer.train()
+
+            # Save and push the final model
+            model_save_path = os.path.join(cfg.output_dir, f"graph_clip_model_{graph_type}")
+            model.push_to_hub(cfg.model.huggingface_hub_model_id + "-" + graph_type.replace("_", "-"))
+            # Also push the processor
+            clip_processor.push_to_hub(cfg.model.huggingface_hub_model_id + "-" + graph_type.replace("_", "-"))
+            trainer.save_model(model_save_path)
+        
+            trained_models[graph_type] = {"model": model, "trainer": trainer}
+            logger.info(f"Successfully trained model for {graph_type}")
 
     logger.info(f"\n{'=' * 50}")
     logger.info(f"Training completed for {len(trained_models)}/{len(graph_types)} graph types")

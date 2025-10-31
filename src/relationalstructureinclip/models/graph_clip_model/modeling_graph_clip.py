@@ -9,7 +9,7 @@ from transformers import CLIPModel, CLIPTextModel, CLIPVisionModel, GraphormerMo
 from transformers.modeling_outputs import BaseModelOutputWithNoAttention, BaseModelOutputWithPooling, ModelOutput
 from transformers.models.clip.modeling_clip import clip_loss
 
-from .configuration_graph_clip import GraphCLIPConfig
+from relationalstructureinclip.models.graph_clip_model.configuration_graph_clip import GraphCLIPConfig
 
 
 class LossLoggingCallback(TrainerCallback):
@@ -81,14 +81,19 @@ class GraphCLIPModel(CLIPModel):
         if config.pretrained_model_name_or_path:
             self.vision_model = CLIPVisionModel.from_pretrained(
                 config.pretrained_model_name_or_path,
+                cache_dir=config.cache_dir,
             ).vision_model
             self.text_model = CLIPTextModel.from_pretrained(
                 config.pretrained_model_name_or_path,
+                cache_dir=config.cache_dir,
             )
 
         # Initialize Graphormer model - load pretrained if specified
         if config.pretrained_graphormer_hub_id:
-            self.graph_model = GraphormerModel.from_pretrained(config.pretrained_graphormer_hub_id)
+            self.graph_model = GraphormerModel.from_pretrained(
+                config.pretrained_graphormer_hub_id,
+                cache_dir=config.cache_dir,
+            )
         else:
             self.graph_model = GraphormerModel._from_config(graph_config)
 
@@ -140,7 +145,6 @@ class GraphCLIPModel(CLIPModel):
             pixel_values=pixel_values,
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
-            return_dict=return_dict,
         )
         image_embeds = vision_outputs[1]  # Pooled output
         image_embeds = self.visual_projection(image_embeds)
@@ -152,7 +156,6 @@ class GraphCLIPModel(CLIPModel):
             position_ids=position_ids,
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
-            return_dict=return_dict,
         )
         text_embeds = text_outputs[1]  # Pooled output
         text_embeds = self.text_projection(text_embeds)

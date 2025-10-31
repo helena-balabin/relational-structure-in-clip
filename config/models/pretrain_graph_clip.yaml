@@ -1,23 +1,16 @@
 output_dir: /data/huggingface/transformers
 
 data:
-  hf_dataset_identifier: "helena-balabin/vg_actions_spatial_for_graphormer_with_text"
-  hf_dataset_identifier_processed: "helena-balabin/vg_actions_spatial_for_graphormer_processed_with_text"
   dataloader_num_workers: 16
-  cache_dir: /data/huggingface/datasets/
-  image_base_path: /data/huggingface/vg/VG_100K
-  push_to_hub: true
-  use_preprocessed: true  # change ?
-  split: "train"
+  local_dataset_identifier_processed: "/data/huggingface/datasets/vg-captions-graphs-processed/processed"
   seed: 42
-  num_proc: 16
-  batch_size: 32
   validation_split: 0.1
-  n_samples: -1
+  remove_columns: ["coco_id", "flickr_id"]
 
 model:
   pretrained_model_name_or_path: "openai/clip-vit-base-patch32"
   huggingface_hub_model_id: "helena-balabin/clip-graphormer"
+  cache_dir: /data/huggingface/transformers/
   model_type: "image"
   graph_types: ["image", "action_image", "spatial_image"] # List of graph types to train models for
   graphormer_size: "small"
@@ -25,8 +18,7 @@ model:
   alpha: 0.5
 
 training:
-  batch_size: 128 # 32 for debug
-  gradient_accumulation_steps: 1
+  batch_size: 64 # 32 for debug
   learning_rate: 1e-4
   epochs: 20 # 1 epochs for debug, 20 for full training
   weight_decay: 0.1
@@ -37,7 +29,6 @@ training:
   warmup_ratio: 0.05
   warmup_ratio_unfreeze: 0.5
   precision: "bf16" # options: "bf16", "fp16", "fp32"
-  compile: true
   pin_memory: true
   persistent_workers: true
   edge_max_dist: 20
