@@ -43,6 +43,7 @@ class GraphCLIPConfig(CLIPConfig):
         pretrained_model_name_or_path: Optional[str] = None,
         pretrained_graphormer_hub_id: Optional[str] = None,
         alpha: float = 0.5,
+        cache_dir: Optional[str] = None,
         **kwargs,
     ):
         """Initialize the GraphCLIPConfig.
@@ -53,9 +54,12 @@ class GraphCLIPConfig(CLIPConfig):
             pretrained_model_name_or_path (str, optional): Checkpoint for CLIP vision/text.
             pretrained_graphormer_hub_id (str, optional): Hub ID for pretrained Graphormer.
             alpha (float, optional): Weighting the different contrastive losses. Defaults to 0.5.
+            cache_dir (str, optional): Cache directory for loading pretrained models.
             **kwargs: Additional arguments for CLIPConfig.
         """
         super().__init__(**kwargs)
+
+        self.cache_dir = cache_dir
 
         # build or assign the graph encoder config
         if isinstance(graph_config, dict):
