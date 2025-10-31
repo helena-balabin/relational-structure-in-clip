@@ -367,6 +367,16 @@ def create_final_preprocessed_dataset(cfg: DictConfig):
         logger.info("Applying final preprocessing map. This is the slowest step...")
         start_time = time.time()
 
+        # Filter out empty graphs if needed
+        logger.info("Filtering out examples with empty graphs...")
+        len_before = len(dset)
+        dset = dset.filter(
+            lambda x: len(x["graph_input"]["edge_index"][0]) > 0,
+            num_proc=cfg.num_proc,
+        )
+        len_after = len(dset)
+        logger.info(f"-> Removed {len_before - len_after} examples with empty graphs.")
+
         final_dataset = dset.map(
             preprocess_function,
             batched=True,
