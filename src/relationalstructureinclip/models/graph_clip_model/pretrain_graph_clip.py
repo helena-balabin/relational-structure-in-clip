@@ -220,6 +220,7 @@ def train_graph_image_model(cfg: DictConfig):
                 learning_rate=cfg.training.learning_rate,
                 per_device_train_batch_size=cfg.training.batch_size,
                 per_device_eval_batch_size=cfg.training.batch_size,
+                gradient_accumulation_steps=cfg.training.gradient_accumulation_steps,
                 max_steps=cfg.training.max_steps,
                 dataloader_num_workers=cfg.data.dataloader_num_workers,
                 dataloader_persistent_workers=cfg.training.persistent_workers,
