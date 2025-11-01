@@ -9,7 +9,7 @@ data:
 
 model:
   pretrained_model_name_or_path: "openai/clip-vit-base-patch32"
-  huggingface_hub_model_id: "helena-balabin/clip-graphormer"
+  huggingface_hub_model_id: "helena-balabin/graph-clip"
   cache_dir: /data/huggingface/transformers/
   model_type: "image"
   graph_types: ["image", "action_image", "spatial_image"] # List of graph types to train models for
