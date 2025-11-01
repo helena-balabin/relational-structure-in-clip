@@ -8,10 +8,7 @@ import mlflow
 import torch
 from datasets import load_from_disk
 from omegaconf import DictConfig
-from torch.optim import AdamW
 from transformers import (
-    AutoConfig,
-    AutoModel,
     CLIPProcessor,
     GraphormerConfig,
     Trainer,
@@ -98,56 +95,6 @@ class WarmupGradualUnfreezeCallback(TrainerCallback):
         return control
 
 
-def build_optimizer(model, cfg):
-    """Build optimizer with layer-wise learning rate decay.
-    
-    Args:
-        model: The model to optimize.
-        cfg: Configuration dictionary with optimizer parameters.
-    """
-    # Default hyper-parameters with safe fallbacks
-    base_lr = cfg.training.learning_rate
-    clip_lr = getattr(cfg.training, "learning_rate_clip", base_lr / 5)
-    graph_lr = getattr(cfg.training, "learning_rate_graph", base_lr)
-    layer_decay = getattr(cfg.training, "layer_decay", 0.9)
-
-    # Collect parameters
-    params_graph = list(model.graph_model.parameters()) + list(model.graph_projection.parameters())
-    params_proj = list(model.visual_projection.parameters()) + list(model.text_projection.parameters())
-
-    # Vision or text layers for LLRD
-    if cfg.model.model_type == "image":
-        layers = list(model.vision_model.encoder.layers)
-    else:
-        layers = list(model.text_model.text_model.encoder.layers)
-
-    num_layers = len(layers)
-    layer_groups = []
-    for i, layer in enumerate(layers):  # lowest to highest
-        scale = layer_decay ** (num_layers - 1 - i)
-        lr = clip_lr * scale
-        layer_groups.append({"params": [p for p in layer.parameters() if p.requires_grad], "lr": lr})
-
-    # Embeddings (treat as bottom layer)
-    if cfg.model.model_type == "image":
-        embed_params = [p for p in model.vision_model.embeddings.parameters() if p.requires_grad]
-    else:
-        embed_params = [p for p in model.text_model.text_model.embeddings.parameters() if p.requires_grad]
-    if embed_params:
-        layer_groups.insert(0, {"params": embed_params, "lr": clip_lr * (layer_decay**num_layers)})
-
-    param_groups = [
-        {"params": [p for p in params_graph if p.requires_grad], "lr": graph_lr},
-        {"params": [p for p in params_proj if p.requires_grad], "lr": graph_lr},
-    ] + layer_groups
-
-    # Filter empty groups
-    param_groups = [g for g in param_groups if g["params"]]
-
-    optimizer = AdamW(param_groups, lr=base_lr, weight_decay=cfg.training.weight_decay)
-    return optimizer
-
-
 @hydra.main(config_path="../../../../config/models", config_name="pretrain_graph_clip")
 def train_graph_image_model(cfg: DictConfig):
     """Train GraphCLIP models for different graph types as specified in the config.
@@ -164,7 +111,6 @@ def train_graph_image_model(cfg: DictConfig):
 
     logger.info(f"Training models for graph types: {graph_types}")
 
-    trained_models = {}
     # Initialize the processor
     clip_processor = CLIPProcessor.from_pretrained(
         cfg.model.pretrained_model_name_or_path,
@@ -189,7 +135,6 @@ def train_graph_image_model(cfg: DictConfig):
             mlflow.log_params(cfg_without_output_dir)
             mlflow.log_param("current_graph_type", graph_type)
 
-            # TODO if the model is still slow use the faster Graphormer implementation
             # Load preprocessed data
             dataset = load_from_disk(
                 cfg.data.local_dataset_identifier_processed + "-" + target_graph_column.replace("_", "-")
@@ -237,22 +182,35 @@ def train_graph_image_model(cfg: DictConfig):
 
             # Initialize the model
             model = GraphCLIPModel(config)
-            model.to("cuda" if torch.cuda.is_available() else "cpu")
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+            model.to(device)
+            
+            # Enable memory optimizations
+            if torch.cuda.is_available():
+                # Enable memory efficient attention if available
+                try:
+                    torch.backends.cuda.enable_flash_sdp(True)
+                except AttributeError:
+                    pass  # Flash attention not available in this PyTorch version
 
-            # TODO change?
-            # Build optimizer with layer-wise decay (scheduler handled by HF Trainer)v
-            optimizer = build_optimizer(model, cfg)
-
-            # Register the model and config to AutoClass
-            AutoConfig.register("graph_clip", GraphCLIPConfig)
-            AutoModel.register(GraphCLIPConfig, GraphCLIPModel)
-            GraphCLIPConfig.register_for_auto_class()
-            GraphCLIPModel.register_for_auto_class("AutoModel")
+                # Optimize memory usage
+                torch.cuda.empty_cache()
+                
+            # Enable gradient checkpointing if configured
+            if getattr(cfg.training, "gradient_checkpointing", True):
+                model.gradient_checkpointing_enable()
+            
+            # Additional speed optimizations
+            if torch.cuda.is_available():
+                # Optimize CUDA operations for speed
+                torch.backends.cudnn.benchmark = True  # Optimize for consistent input sizes
+                torch.backends.cuda.matmul.allow_tf32 = True  # Enable TF32 for matrix ops
 
             warmup_ratio = getattr(cfg.training, "warmup_ratio", 0.05)
             warmup_ratio_unfreeze = getattr(cfg.training, "warmup_ratio_unfreeze", 0.5)
             use_bf16 = (cfg.training.precision == "bf16") and torch.cuda.is_available()
             use_fp16 = (cfg.training.precision == "fp16") and torch.cuda.is_available()
+            
             training_args = TrainingArguments(
                 output_dir=os.path.join(cfg.output_dir, f"graph-clip-{graph_type}"),
                 eval_strategy="steps",
@@ -262,24 +220,26 @@ def train_graph_image_model(cfg: DictConfig):
                 learning_rate=cfg.training.learning_rate,
                 per_device_train_batch_size=cfg.training.batch_size,
                 per_device_eval_batch_size=cfg.training.batch_size,
-                num_train_epochs=cfg.training.epochs,
+                max_steps=cfg.training.max_steps,
                 dataloader_num_workers=cfg.data.dataloader_num_workers,
                 dataloader_persistent_workers=cfg.training.persistent_workers,
                 dataloader_pin_memory=cfg.training.pin_memory,
+                dataloader_drop_last=cfg.training.dataloader_drop_last,
                 weight_decay=cfg.training.weight_decay,
-                logging_dir=os.path.join(cfg.output_dir, f"graph-clip-{graph_type}", "logs"),
+                logging_dir=os.path.join(cfg.output_dir, f"graph-clip-{graph_type.replace('_', '-')}", "logs"),
                 logging_steps=cfg.training.logging_steps,
                 save_total_limit=cfg.training.save_total_limit,
                 load_best_model_at_end=True,
                 metric_for_best_model="eval_loss",
-                greater_is_better=False,
-                lr_scheduler_type="cosine",
+                lr_scheduler_type="linear",
                 warmup_ratio=warmup_ratio,
                 max_grad_norm=1.0,
                 report_to=["mlflow"],
                 bf16=use_bf16,
                 fp16=use_fp16,
                 remove_unused_columns=False,
+                torch_compile=True,
+                optim="adamw_torch_fused" if torch.cuda.is_available() else "adamw_torch",  # Faster optimizer
             )
 
             warmup_steps = int(warmup_ratio_unfreeze * (len(dataset["train"]) / (cfg.training.batch_size)))
@@ -289,17 +249,22 @@ def train_graph_image_model(cfg: DictConfig):
                 warmup_steps=warmup_steps,
             )
 
+            # Optimize datasets for faster loading
+            try:
+                train_dataset.set_format(type="torch", columns=train_dataset.column_names)
+                validation_dataset.set_format(type="torch", columns=validation_dataset.column_names)
+            except Exception:
+                # Fallback if set_format is not supported
+                pass
+            
             trainer = Trainer(
                 model=model,
                 args=training_args,
                 train_dataset=train_dataset,
                 eval_dataset=validation_dataset,
                 data_collator=GraphCLIPDataCollator(
-                    on_the_fly_processing=False,
                     edge_max_dist=cfg.training.edge_max_dist,
-                    device="cuda" if torch.cuda.is_available() else "cpu",
                 ),
-                optimizers=(optimizer, None),
                 callbacks=[gradual_cb, LossLoggingCallback()],
             )
             # Train the model
@@ -311,16 +276,12 @@ def train_graph_image_model(cfg: DictConfig):
             # Also push the processor
             clip_processor.push_to_hub(cfg.model.huggingface_hub_model_id + "-" + graph_type.replace("_", "-"))
             trainer.save_model(model_save_path)
-        
-            trained_models[graph_type] = {"model": model, "trainer": trainer}
+
             logger.info(f"Successfully trained model for {graph_type}")
 
     logger.info(f"\n{'=' * 50}")
-    logger.info(f"Training completed for {len(trained_models)}/{len(graph_types)} graph types")
-    logger.info(f"Successfully trained models: {list(trained_models.keys())}")
+    logger.info(f"Successfully trained models: {list(graph_types)}")
     logger.info(f"{'=' * 50}")
-
-    return trained_models
 
 
 if __name__ == "__main__":

@@ -30,63 +30,74 @@ class GraphCLIPDataCollator:
         # Separate graph_input from the rest
         graph_features = [f["graph_input"] for f in features]
         # Check if there are any non-graph features
-        if len(features[0].keys()) > 1:
+        has_non_graph_features = len(features[0].keys()) > 1
+        if has_non_graph_features:
             non_graph_features = [{k: v for k, v in f.items() if k != "graph_input"} for f in features]
 
         if not isinstance(graph_features[0], Mapping):
             graph_features = [vars(f) for f in graph_features]
-        batch = {}
 
-        # Get some characteristics of the batch
-        max_node_num = max(len(i["input_nodes"]) for i in graph_features)
-        node_feat_size = len(graph_features[0]["input_nodes"][0])
-        edge_feat_size = len(graph_features[0]["attn_edge_type"][0][0])
-        # Use fixed cap to avoid scanning and variable shapes per batch
-        max_dist = self.edge_max_dist
-        edge_input_size = len(graph_features[0]["input_edges"][0][0][0])
         batch_size = len(graph_features)
+        
+        # Get batch characteristics more efficiently
+        first_graph = graph_features[0]
+        max_node_num = max(len(g["input_nodes"]) for g in graph_features)
+        node_feat_size = len(first_graph["input_nodes"][0])
+        edge_feat_size = len(first_graph["attn_edge_type"][0][0])
+        edge_input_size = len(first_graph["input_edges"][0][0][0])
+        max_dist = self.edge_max_dist
 
-        batch["attn_bias"] = torch.zeros(batch_size, max_node_num + 1, max_node_num + 1, dtype=torch.float)
-        batch["attn_edge_type"] = torch.zeros(batch_size, max_node_num, max_node_num, edge_feat_size, dtype=torch.long)
-        batch["spatial_pos"] = torch.zeros(batch_size, max_node_num, max_node_num, dtype=torch.long)
-        batch["in_degree"] = torch.zeros(batch_size, max_node_num, dtype=torch.long)
-        batch["input_nodes"] = torch.zeros(batch_size, max_node_num, node_feat_size, dtype=torch.long)
-        batch["input_edges"] = torch.zeros(
-            batch_size, max_node_num, max_node_num, max_dist, edge_input_size, dtype=torch.long
-        )
+        # Pre-allocate batch tensors with proper dtypes
+        batch = {
+            "attn_bias": torch.zeros(batch_size, max_node_num + 1, max_node_num + 1, dtype=torch.float),
+            "attn_edge_type": torch.zeros(batch_size, max_node_num, max_node_num, edge_feat_size, dtype=torch.long),
+            "spatial_pos": torch.zeros(batch_size, max_node_num, max_node_num, dtype=torch.long),
+            "in_degree": torch.zeros(batch_size, max_node_num, dtype=torch.long),
+            "input_nodes": torch.zeros(batch_size, max_node_num, node_feat_size, dtype=torch.long),
+            "input_edges": torch.zeros(batch_size, max_node_num, max_node_num, max_dist, edge_input_size, dtype=torch.long),
+        }
 
+        # Process each graph feature efficiently
         for ix, f in enumerate(graph_features):
+            # Convert to tensors only once per feature dict
+            f_tensors = {}
             for k in ["attn_bias", "attn_edge_type", "spatial_pos", "in_degree", "input_nodes", "input_edges"]:
-                f[k] = torch.tensor(f[k])
-            # If any preprocessed input has deeper paths, trim on the fly (rare if preprocessing capped)
-            if f["input_edges"].shape[2] > max_dist:
-                f["input_edges"] = f["input_edges"][:, :, :max_dist, :]
+                if isinstance(f[k], torch.Tensor):
+                    f_tensors[k] = f[k]
+                else:
+                    f_tensors[k] = torch.as_tensor(f[k], dtype=batch[k].dtype)
+            
+            # Trim input_edges if necessary
+            if f_tensors["input_edges"].shape[2] > max_dist:
+                f_tensors["input_edges"] = f_tensors["input_edges"][:, :, :max_dist, :]
 
-            if len(f["attn_bias"][1:, 1:][f["spatial_pos"] >= self.spatial_pos_max]) > 0:
-                f["attn_bias"][1:, 1:][f["spatial_pos"] >= self.spatial_pos_max] = float("-inf")
+            # Apply spatial position masking more efficiently
+            if self.spatial_pos_max < float('inf'):
+                mask = f_tensors["spatial_pos"] >= self.spatial_pos_max
+                if mask.any():
+                    f_tensors["attn_bias"][1:, 1:][mask] = float("-inf")
+            # Copy tensors to batch (using slice assignment for efficiency)
+            h, w = f_tensors["attn_bias"].shape
+            batch["attn_bias"][ix, :h, :w] = f_tensors["attn_bias"]
+            h, w, c = f_tensors["attn_edge_type"].shape
+            batch["attn_edge_type"][ix, :h, :w, :] = f_tensors["attn_edge_type"]
+            h, w = f_tensors["spatial_pos"].shape
+            batch["spatial_pos"][ix, :h, :w] = f_tensors["spatial_pos"]
+            n = f_tensors["in_degree"].shape[0]
+            batch["in_degree"][ix, :n] = f_tensors["in_degree"]
+            n, c = f_tensors["input_nodes"].shape
+            batch["input_nodes"][ix, :n, :] = f_tensors["input_nodes"]
+            h, w, d, c = f_tensors["input_edges"].shape
+            batch["input_edges"][ix, :h, :w, :d, :] = f_tensors["input_edges"]
 
-            batch["attn_bias"][ix, : f["attn_bias"].shape[0], : f["attn_bias"].shape[1]] = f["attn_bias"]
-            batch["attn_edge_type"][ix, : f["attn_edge_type"].shape[0], : f["attn_edge_type"].shape[1], :] = f[
-                "attn_edge_type"
-            ]
-            batch["spatial_pos"][ix, : f["spatial_pos"].shape[0], : f["spatial_pos"].shape[1]] = f["spatial_pos"]
-            batch["in_degree"][ix, : f["in_degree"].shape[0]] = f["in_degree"]
-            batch["input_nodes"][ix, : f["input_nodes"].shape[0], :] = f["input_nodes"]
-            batch["input_edges"][
-                ix, : f["input_edges"].shape[0], : f["input_edges"].shape[1], : f["input_edges"].shape[2], :
-            ] = f["input_edges"]
-
+        # Set out_degree (shared memory with in_degree for efficiency)
         batch["out_degree"] = batch["in_degree"]
 
-        # Use the Hugging Face default collator for non-graph features
-        if len(features[0].keys()) > 1:
+        # Combine with non-graph features if present
+        if has_non_graph_features:
             non_graph_batch = default_data_collator(non_graph_features)
-            # Combine graph and non-graph batches
             combined_batch = {**non_graph_batch, "graph_input": batch}
         else:
-            if self.unwrap_dict:
-                combined_batch = batch
-            else:
-                combined_batch = {"graph_input": batch}
+            combined_batch = {"graph_input": batch} if not self.unwrap_dict else batch
 
         return combined_batch

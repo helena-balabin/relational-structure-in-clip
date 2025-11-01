@@ -18,13 +18,13 @@ model:
   alpha: 0.5
 
 training:
-  batch_size: 64 # 32 for debug
+  batch_size: 1024 # 32 for debug
   learning_rate: 1e-4
-  epochs: 20 # 1 epochs for debug, 20 for full training
+  max_steps: 1250 # 100 steps for debug
   weight_decay: 0.1
   logging_steps: 50
-  eval_steps: 150
-  save_steps: 300
+  eval_steps: 50  # 10 for debug
+  save_steps: 250
   save_total_limit: 3
   warmup_ratio: 0.05
   warmup_ratio_unfreeze: 0.5
@@ -32,6 +32,7 @@ training:
   pin_memory: true
   persistent_workers: true
   edge_max_dist: 20
+  dataloader_drop_last: true
 
 mlflow:
   tracking_uri: /data/mlflow/
