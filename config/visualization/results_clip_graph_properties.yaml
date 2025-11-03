@@ -16,11 +16,12 @@ save_plot: true
 show_plot: false
 
 # Plot appearance
-figure_size: [15, 5]  # width, height in inches
+figure_size: [18, 5]
 title_fontsize: 14
-axis_label_fontsize: 12
-tick_label_fontsize: 10
-legend_fontsize: 10
+axis_label_fontsize: 14
+tick_label_fontsize: 14
+legend_fontsize: 14
+y_tick_label_fontsize: 14
 
 # Graph type ordering and labels
 graph_types: [
@@ -76,3 +77,17 @@ color_palette: [
 bar_width: 0.15
 alpha: 0.8
 error_bars: true  # Set to true if you have error data
+
+# Subset groups for separate plots
+text_graph_types:
+  - amr_graphs
+  - dependency_graphs
+image_graph_types:
+  - image_graphs
+  - action_image_graphs
+  - spatial_image_graphs
+
+# Generate separate text/image figures and include an average subplot
+separate_property_plots: true
+add_average_plot: true
+average_metric_title: "Average (R²)"
