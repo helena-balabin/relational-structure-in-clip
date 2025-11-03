@@ -376,7 +376,7 @@ def preprocess_vg_for_graphormer(cfg: DictConfig) -> None:
     # Stage 2: Process the image/text and graph properties
     processor = CLIPProcessor.from_pretrained(
         cfg.model.pretrained_model_name_or_path,
-        cache_dir=cfg.model.get("cache_dir", None),
+        cache_dir=cfg.model.cache_dir,
         use_fast=True,
     )
     intermediate_dataset = load_from_disk(dataset_path=cfg.vg_processed_dir)
