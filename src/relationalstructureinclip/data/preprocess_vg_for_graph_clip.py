@@ -16,7 +16,7 @@ from transformers import CLIPProcessor
 from scipy.sparse.csgraph import shortest_path  # type: ignore
 
 
-UNREACHABLE_NODE_DISTANCE = 510
+UNREACHABLE_NODE_DISTANCE = 10
 
 
 def shortest_path_wrapper(
@@ -132,7 +132,7 @@ def convert_to_single_emb(
 
 def preprocess_item(
     item,
-    edge_max_dist: int = 20,
+    edge_max_dist: int = 10,
     remove_extra_features: bool = True,
 ):
     """Preprocess the input item for Graphormer.

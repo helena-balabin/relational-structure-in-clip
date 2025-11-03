@@ -42,4 +42,4 @@ model:
 
 # Training details needed for preprocess_item
 training:
-  edge_max_dist: 20
+  edge_max_dist: 10
