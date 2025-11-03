@@ -28,7 +28,7 @@ preprocessed_output_path: "/scratch/hbalabin/huggingface/datasets/vg-captions-gr
 preprocessing_batch_size: 64
 overwrite_cache: false
 max_shard_size: "8GB"
-push_to_hub: true
+push_to_hub: false
 hf_dataset_identifier_processed: "helena-balabin/vg-captions-graphs-processed"
 
 # Model details needed for the CLIPProcessor
