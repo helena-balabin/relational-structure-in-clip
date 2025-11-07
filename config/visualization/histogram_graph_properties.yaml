@@ -39,7 +39,7 @@ image_graph_columns: [
 graph_type_labels:
   amr_graphs: "AMR"
   dependency_graphs: "Dependency"
-  image_graphs: "Image"
+  image_graphs: "Complete"
   action_image_graphs: "Action"
   spatial_image_graphs: "Spatial"
 

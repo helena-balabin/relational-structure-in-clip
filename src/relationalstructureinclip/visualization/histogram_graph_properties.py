@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 import hydra
-import matplotlib.pyplot as plt
+import matplotlib.pyplot as plt  # type: ignore
 import pandas as pd
 from datasets import load_dataset
 from hydra.core.config_store import ConfigStore
@@ -291,7 +291,7 @@ def create_histogram_subplots(
                 ax.set_xticks(range(max_depth_shown + 1))
     
     # Add overall title
-    fig.suptitle('Graph Property Distributions by Type', fontsize=cfg.suptitle_fontsize, y=0.95)
+    fig.suptitle('Graph Property Distributions by Type', fontsize=cfg.suptitle_fontsize)
     
     plt.tight_layout()
     plt.subplots_adjust(top=0.92)  # Make room for suptitle
