@@ -16,12 +16,12 @@ save_plot: true
 show_plot: false
 
 # Plot appearance
-figure_size: [18, 5]
-title_fontsize: 14
-axis_label_fontsize: 14
-tick_label_fontsize: 14
-legend_fontsize: 14
-y_tick_label_fontsize: 14
+figure_size: [15, 5]
+title_fontsize: 16
+axis_label_fontsize: 16
+tick_label_fontsize: 16
+legend_fontsize: 16
+y_tick_label_fontsize: 16
 
 # Graph type ordering and labels
 graph_types: [

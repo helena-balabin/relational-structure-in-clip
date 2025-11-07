@@ -36,7 +36,6 @@ model:
   pretrained_model_name_or_path: "openai/clip-vit-base-patch32"
   cache_dir: "/scratch/hbalabin/huggingface/transformers/"
   graph_types:
-    - "image_graphs"
     - "action_image_graphs"
     - "spatial_image_graphs"
 

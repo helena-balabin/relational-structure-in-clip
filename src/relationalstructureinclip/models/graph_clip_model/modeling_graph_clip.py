@@ -5,34 +5,11 @@ from typing import Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
-from transformers import CLIPModel, CLIPTextModel, CLIPVisionModel, GraphormerModel, TrainerCallback
+from transformers import CLIPModel, CLIPTextModel, CLIPVisionModel, GraphormerModel
 from transformers.modeling_outputs import BaseModelOutputWithNoAttention, BaseModelOutputWithPooling, ModelOutput
 from transformers.models.clip.modeling_clip import clip_loss
 
 from relationalstructureinclip.models.graph_clip_model.configuration_graph_clip import GraphCLIPConfig
-
-
-class LossLoggingCallback(TrainerCallback):
-    """Custom callback to log separate component losses during training."""
-    def on_log(self, args, state, control, logs=None, model=None, **kwargs):  # type: ignore
-        """Log losses from the model during training.
-
-        Args:
-            args: Training arguments.
-            state: Training state.
-            control: Control object for training.
-            logs: Dictionary of logs to update.
-            model: The model being trained.
-        """
-        if logs is None or model is None:
-            return
-        add = {}
-        if getattr(model, "last_loss_image_text", None) is not None:
-            add["loss_image_text"] = model.last_loss_image_text
-        if getattr(model, "last_loss_graph_pair", None) is not None:
-            add["loss_graph_pair"] = model.last_loss_graph_pair
-        if add:
-            logs.update(add)
 
 
 @dataclass
@@ -42,6 +19,8 @@ class GraphCLIPOutput(ModelOutput):
 
     Attributes:
         loss (torch.FloatTensor, optional): Loss value if return_loss is True.
+        loss_graph_pair (torch.FloatTensor, optional): Loss value for graph-text or graph-image pairs.
+        loss_image_text (torch.FloatTensor, optional): Loss value for image-text pairs.
         logits_image_text (torch.FloatTensor): Logits for image-text pairs.
         logits_graph_pair (torch.FloatTensor): Logits for graph-text or graph-image pairs.
         image_embeds (torch.FloatTensor): Image embeddings.
@@ -53,6 +32,8 @@ class GraphCLIPOutput(ModelOutput):
     """
 
     loss: Optional[torch.FloatTensor] = None
+    loss_graph_pair: Optional[torch.FloatTensor] = None
+    loss_image_text: Optional[torch.FloatTensor] = None
     logits_image_text: torch.FloatTensor = None
     logits_graph_pair: torch.FloatTensor = None
     image_embeds: torch.FloatTensor = None
@@ -79,10 +60,11 @@ class GraphCLIPModel(CLIPModel):
 
         # If "pretrained_model_name_or_path" is in config, load the pretrained vision and text models
         if config.pretrained_model_name_or_path:
+            # Keep the wrapper; unfreeze logic expects `.vision_model` inside it
             self.vision_model = CLIPVisionModel.from_pretrained(
                 config.pretrained_model_name_or_path,
                 cache_dir=config.cache_dir,
-            ).vision_model
+            )
             self.text_model = CLIPTextModel.from_pretrained(
                 config.pretrained_model_name_or_path,
                 cache_dir=config.cache_dir,
@@ -102,10 +84,6 @@ class GraphCLIPModel(CLIPModel):
 
         # Determine the graph pair type (either "text" or "image")
         self.graph_pair_type = config.graph_pair_type  # Should be "text" or "image"
-
-        # For logging component losses
-        self.last_loss_image_text: Optional[torch.tensor] = None
-        self.last_loss_graph_pair: Optional[torch.tensor] = None
 
     def forward(
         self,
@@ -192,28 +170,20 @@ class GraphCLIPModel(CLIPModel):
                 raise ValueError("Invalid graph_pair_type. Must be 'text' or 'image'.")
 
         loss = None
+        loss_graph_pair = None
+        loss_image_text = None
         if return_loss:
-            # Compute contrastive loss for the specified pairs
             loss_image_text = clip_loss(logits_image_text)
-            # Store for logging
-            try:
-                self.last_loss_image_text = loss_image_text.detach().mean()
-            except Exception:
-                self.last_loss_image_text = None
-
             if logits_graph_pair is not None:
                 loss_graph_pair = clip_loss(logits_graph_pair)
-                try:
-                    self.last_loss_graph_pair = loss_graph_pair.detach().mean()
-                except Exception:
-                    self.last_loss_graph_pair = None
                 loss = (1.0 - self.alpha) * loss_image_text + self.alpha * loss_graph_pair
             else:
-                self.last_loss_graph_pair = None
                 loss = loss_image_text
 
         if not return_dict:
             output = (
+                loss_graph_pair,
+                loss_image_text,
                 logits_image_text,
                 logits_graph_pair,
                 image_embeds,
@@ -227,6 +197,8 @@ class GraphCLIPModel(CLIPModel):
 
         return GraphCLIPOutput(
             loss=loss,
+            loss_graph_pair=loss_graph_pair,
+            loss_image_text=loss_image_text,
             logits_image_text=logits_image_text,
             logits_graph_pair=logits_graph_pair,
             image_embeds=image_embeds,
@@ -238,49 +210,68 @@ class GraphCLIPModel(CLIPModel):
         )
 
     def freeze_layers(self, freeze_vision: bool = False, freeze_text: bool = False, freeze_graph: bool = False):
-        """
-        Freeze or unfreeze layers of the vision, text, and graph backbones.
+        """Freeze/unfreeze modality backbones (not heads)."""
+        def set_requires_grad(module, flag: bool):
+            for p in module.parameters():
+                p.requires_grad = flag
 
-        Args:
-            freeze_vision (bool): Whether to freeze the vision backbone.
-            freeze_text (bool): Whether to freeze the text backbone.
-            freeze_graph (bool): Whether to freeze the graph backbone.
-        """
         if freeze_vision:
-            for param in self.vision_model.parameters():
-                param.requires_grad = False
-
+            set_requires_grad(self.vision_model, False)
         if freeze_text:
-            for param in self.text_model.parameters():
-                param.requires_grad = False
-
+            set_requires_grad(self.text_model, False)
         if freeze_graph:
-            for param in self.graph_model.parameters():
-                param.requires_grad = False
+            # Graph encoder + its projection
+            if hasattr(self, "graph_model"):
+                set_requires_grad(self.graph_model, False)
+            if hasattr(self, "graph_projection"):
+                set_requires_grad(self.graph_projection, False)
+
+    def freeze_projection_and_temperature(self, freeze: bool = True):
+        """Freeze/unfreeze CLIP heads and temperature."""
+        if hasattr(self, "visual_projection"):
+            for p in self.visual_projection.parameters():
+                p.requires_grad = not freeze
+        if hasattr(self, "text_projection"):
+            for p in self.text_projection.parameters():
+                p.requires_grad = not freeze
+        if hasattr(self, "logit_scale"):
+            self.logit_scale.requires_grad = not freeze
 
     def unfreeze_partial_layers(self, model_part: str, num_layers: int):
-        """
-        Unfreeze the last `num_layers` of a specific model part.
+        """Gradually unfreeze last N encoder blocks; include final norm with blocks; embeddings when fully unfrozen."""
+        assert model_part in {"vision", "text"}
 
-        Args:
-            model_part (str): The part of the model to unfreeze ('vision', 'text', or 'graph').
-            num_layers (int): Number of layers to unfreeze from the end.
-        """
         if model_part == "vision":
-            layers = list(self.vision_model.encoder.layers)
-        elif model_part == "text":
-            layers = list(self.text_model.text_model.encoder.layers)
-        elif model_part == "graph":
-            layers = list(self.graph_model.graph_encoder.layers)
+            vm = self.vision_model.vision_model
+            layers = list(vm.encoder.layers)
+            final_norm = getattr(vm, "post_layernorm", None) or getattr(vm, "final_layer_norm", None)
+            embeddings = getattr(vm, "embeddings", None)
+            root_module = self.vision_model
         else:
-            raise ValueError("Invalid model_part. Must be 'vision', 'text', or 'graph'.")
+            tm = self.text_model.text_model
+            layers = list(tm.encoder.layers)
+            final_norm = getattr(tm, "final_layer_norm", None)
+            embeddings = getattr(tm, "embeddings", None)
+            root_module = self.text_model
 
-        # Freeze all layers first
-        for layer in layers:
-            for param in layer.parameters():
-                param.requires_grad = False
+        total = len(layers)
+        k = max(0, min(num_layers, total))
 
-        # Unfreeze the last `num_layers`
-        for layer in layers[-num_layers:]:
-            for param in layer.parameters():
-                param.requires_grad = True
+        # First freeze everything under the chosen backbone to get a clean slate.
+        for p in root_module.parameters():
+            p.requires_grad = False
+
+        # Unfreeze last k blocks
+        if k > 0:
+            for blk in layers[-k:]:
+                for p in blk.parameters():
+                    p.requires_grad = True
+            # Final norm comes in with the first block
+            if final_norm is not None:
+                for p in final_norm.parameters():
+                    p.requires_grad = True
+
+        # Bring embeddings only when fully unfrozen
+        if k == total and embeddings is not None:
+            for p in embeddings.parameters():
+                p.requires_grad = True
