@@ -24,21 +24,41 @@ logger = logging.getLogger(__name__)
 
 
 class ExtraLoggingTrainer(Trainer):
+    """
+    Trainer that logs extra model outputs (like extra losses) in sync with normal logging.
+    """
     def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
         # Forward pass
         outputs = model(**inputs)
-        loss = outputs.loss  # standard loss for HF Trainer
+        loss = outputs["loss"]
 
-        # Log extra losses to MLflow if a run is active
-        if mlflow.active_run():
-            prefix = "train" if self.training else "eval"
-            for key in ["loss_graph_pair", "loss_image_text"]:
-                val = getattr(outputs, key, None)
-                if val is not None:
-                    mlflow.log_metric(f"{prefix}/{key}", val.detach().cpu().item(), step=self.state.global_step)
+        # Store outputs in TrainerState for callback to access
+        self.state.last_model_outputs = outputs
 
         return (loss, outputs) if return_outputs else loss
 
+class ExtraLossCallback(TrainerCallback):
+    """Logs extra losses to MLflow at the same frequency as normal Trainer logs, separated for train/eval."""
+
+    def on_log(self, args, state, control, logs=None, **kwargs):
+        if logs is None or not mlflow.active_run():
+            return
+
+        outputs = getattr(state, "last_model_outputs", None)
+        if outputs is None:
+            return
+
+        # Determine phase by checking if any eval key exists
+        prefix = "eval" if any(k.startswith("eval_") for k in logs.keys()) else "train"
+
+        for key in ["loss_graph_pair", "loss_image_text"]:
+            val_tensor = getattr(outputs, key, None)
+            if val_tensor is not None:
+                val = val_tensor.detach().cpu().mean().item()
+                metric_name = f"{prefix}_{key}"
+                logs[metric_name] = val
+                mlflow.log_metric(metric_name, val, step=state.global_step)
+                
 
 class WarmupGradualUnfreezeCallback(TrainerCallback):
     """Warmup graph-only training, then gradually unfreeze backbone layers; unfreeze CLIP heads at first step."""
@@ -253,7 +273,7 @@ def train_graph_image_model(cfg: DictConfig):
                     edge_max_dist=cfg.data.edge_max_dist,
                     max_nodes=getattr(cfg.data, "max_nodes", None),
                 ),
-                callbacks=[gradual_cb, ClearCacheBeforeSaveCallback()],
+                callbacks=[gradual_cb, ClearCacheBeforeSaveCallback(), ExtraLossCallback()],
             )
             # Train the model
             trainer.train()

@@ -14,7 +14,7 @@ model:
   huggingface_hub_model_id: "helena-balabin/graph-clip"
   cache_dir: /data/huggingface/transformers/
   model_type: "image"
-  graph_types: ["action_image", "spatial_image", "image"] # List of graph types to train models for
+  graph_types: ["image", "spatial_image", "action_image"] # List of graph types to train models for
   graphormer_size: "small"
   dropout: 0.1
   alpha: 0.5  # Set to 1.0 to only look at graph-image contrastive loss
