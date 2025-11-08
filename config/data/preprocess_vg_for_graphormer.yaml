@@ -26,7 +26,7 @@ image_base_path: "/data/huggingface/vg/VG_100K"
 # Could be around 700 GB for the three graph types.
 preprocessed_output_path: "/scratch/hbalabin/huggingface/datasets/vg-captions-graphs-processed"
 preprocessing_batch_size: 64
-overwrite_cache: false
+overwrite_cache: true
 max_shard_size: "8GB"
 push_to_hub: false
 hf_dataset_identifier_processed: "helena-balabin/vg-captions-graphs-processed"
@@ -42,3 +42,5 @@ model:
 # Training details needed for preprocess_item
 training:
   edge_max_dist: 10
+  spatial_pos_max: 20
+  max_nodes: 40

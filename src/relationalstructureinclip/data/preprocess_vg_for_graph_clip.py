@@ -1,5 +1,6 @@
 """Preprocess VG data for GraphCLIP training."""
 
+import logging
 import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -15,6 +16,9 @@ from torchvision.io import decode_image
 from transformers import CLIPProcessor
 from scipy.sparse.csgraph import shortest_path  # type: ignore
 
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 UNREACHABLE_NODE_DISTANCE = 10
 
@@ -77,33 +81,49 @@ def get_all_edges(
 
 def gen_edge_input(
     max_dist: int,
-    path: np.ndarray,
-    edge_feat: np.ndarray,
+    path: torch.Tensor,
+    edge_feat: torch.Tensor,
 ):
-    """Generates the full edge feature and adjacency matrix.
+    """Generates the full edge feature tensor using torch.
 
-    Shape: num_nodes * num_nodes * max_distance_between_nodes * num_edge_features
-    Dim 1 is the input node, dim 2 the output node of the edge, dim 3 the depth of the edge, dim 4 the feature
+    Shape: [num_nodes, num_nodes, max_dist, num_edge_features]
+    Dim 0 is the source node, dim 1 the target node, dim 2 the depth of the edge, dim 3 the feature.
 
     :param max_dist: The maximum distance between nodes.
-    :type max_dist: int
-    :param path: The path matrix obtained from the Floyd-Warshall algorithm.
-    :type path: np.ndarray
-    :param edge_feat: The edge feature matrix.
-    :type edge_feat: np.ndarray
-    :return: The full edge feature and adjacency matrix.
-    :rtype: np.ndarray
+    :param path: Predecessor matrix from shortest path (torch.int32/int64), with UNREACHABLE_NODE_DISTANCE as sentinel.
+    :param edge_feat: The edge feature tensor [num_nodes, num_nodes, num_edge_features].
+    :return: Full edge feature tensor.
+    :rtype: torch.Tensor
     """
-    n = path.shape[0]
-    edge_fea_all = -1 * np.ones((n, n, max_dist, edge_feat.shape[-1]), dtype=np.int32)
+    n = int(path.shape[0])
+    device = edge_feat.device
+    edge_fea_all = torch.full((n, n, max_dist, edge_feat.shape[-1]), -1, dtype=torch.long, device=device)
+
+    # Helper to reconstruct path i->j using predecessor matrix
+    def _get_path_nodes(i: int, j: int):
+        if int(path[i, j].item()) == UNREACHABLE_NODE_DISTANCE:
+            return []
+        nodes = []
+        current = j
+        # Safeguard against infinite loops on malformed predecessors
+        steps = 0
+        while current != i and int(path[i, current].item()) != UNREACHABLE_NODE_DISTANCE:
+            prev = int(path[i, current].item())
+            nodes.append(prev)
+            current = prev
+            steps += 1
+            if steps > n:  # break on anomaly
+                break
+        nodes.reverse()
+        return nodes[1:-1] if len(nodes) > 2 else []
 
     for i in range(n):
         for j in range(n):
             if i == j:
                 continue
-            if path[i, j] == UNREACHABLE_NODE_DISTANCE:
+            if int(path[i, j].item()) == UNREACHABLE_NODE_DISTANCE:
                 continue
-            node_path = [i] + get_all_edges(path, i, j) + [j]
+            node_path = [i] + _get_path_nodes(i, j) + [j]
             num_path = len(node_path) - 1
             for k in range(num_path):
                 edge_fea_all[i, j, k, :] = edge_feat[node_path[k], node_path[k + 1], :]
@@ -112,65 +132,81 @@ def gen_edge_input(
 
 
 def convert_to_single_emb(
-    x: np.ndarray,
+    x: torch.Tensor,
     offset: int = 512,
 ):
-    """Convert the input to a single embedding.
+    """Convert the input features to a single embedding space using torch.
 
-    :param x: The input array.
-    :type x: np.ndarray
-    :param offset: The offset value for the embedding.
-    :type offset: int
-    :return: The converted input array.
-    :rtype: np.ndarray
+    :param x: Input tensor [..., feature_dim].
+    :param offset: Offset used per feature dimension.
+    :return: Tensor with feature offsets applied.
+    :rtype: torch.Tensor
     """
-    feature_num = x.shape[1] if len(x.shape) > 1 else 1
-    feature_offset = 1 + np.arange(0, feature_num * offset, offset, dtype=np.int64)
-    x = x + feature_offset
-    return x
+    feature_num = x.shape[1] if x.dim() > 1 else 1
+    feature_offset = (1 + torch.arange(0, feature_num * offset, offset, dtype=torch.long, device=x.device))
+    return x + feature_offset
 
 
 def preprocess_item(
     item,
     edge_max_dist: int = 10,
+    spatial_pos_max: int = 20,
+    max_nodes: Optional[int] = None,
     remove_extra_features: bool = True,
+    pad_to_max_nodes: bool = True,
+    flatten: bool = False,
 ):
     """Preprocess the input item for Graphormer.
 
     :item: The input item to preprocess.
     :type item: dict
-    :param edge_max_dist: The maximum edge distance.
+    :param edge_max_dist: The maximum edge path depth (truncates dim=2 of input_edges).
     :type edge_max_dist: int
+    :param spatial_pos_max: Distances >= this threshold get attention bias -inf (excluding graph token row/col).
+    :type spatial_pos_max: int
+    :param max_nodes: If provided, graphs are truncated to this node count; optionally padded to this size.
+    :type max_nodes: Optional[int]
     :param remove_extra_features: Whether to remove extra features from the item.
     :type remove_extra_features: bool
+    :param pad_to_max_nodes: Whether to pad (after possible truncation) up to max_nodes for uniform tensor shapes.
+    :type pad_to_max_nodes: bool
+    :param flatten: If True, returns a flat dict of tensors (no additional filtering) suitable for direct collation.
+    :type flatten: bool
     :return: The preprocessed item.
     :rtype: dict
     """
-    edge_attr = np.ones((len(item["edge_index"][0]), 1), dtype=np.int64)  # same embedding for all
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    edge_attr = torch.ones((len(item["edge_index"][0]), 1), dtype=torch.long, device=device)  # same embedding for all
 
     # Infer num_nodes from edge_index
     if len(item["edge_index"][0]) == 0:
         item["num_nodes"] = 0
     else:
-        item["num_nodes"] = int(np.max(item["edge_index"]) + 1)
+        # edge_index is list[list]; compute max with torch for consistency
+        edge_index_list = torch.as_tensor(item["edge_index"], dtype=torch.long)
+        item["num_nodes"] = int(torch.max(edge_index_list).item() + 1)
     
-    node_feature = np.ones((item["num_nodes"], 1), dtype=np.int64)  # same embedding for all
-    edge_index = np.asarray(item["edge_index"], dtype=np.int64)
+    node_feature = torch.ones((item["num_nodes"], 1), dtype=torch.long, device=device)  # same embedding for all
+    edge_index = torch.as_tensor(item["edge_index"], dtype=torch.long, device=device)
     input_nodes = convert_to_single_emb(node_feature) + 1
     num_nodes = item["num_nodes"]
 
-    if len(edge_attr.shape) == 1:
+    if edge_attr.dim() == 1:
         edge_attr = edge_attr[:, None]
-    attn_edge_type = np.zeros([num_nodes, num_nodes, edge_attr.shape[-1]], dtype=np.int64)
+    attn_edge_type = torch.zeros(num_nodes, num_nodes, edge_attr.shape[-1], dtype=torch.long, device=device)
     attn_edge_type[edge_index[0], edge_index[1]] = convert_to_single_emb(edge_attr) + 1
 
     # Node adjacency matrix [num_nodes, num_nodes] bool
-    adj = np.zeros([num_nodes, num_nodes], dtype=bool)
-    adj[edge_index[0], edge_index[1]] = True
+    adj = torch.zeros((num_nodes, num_nodes), dtype=torch.bool, device=device)
+    if num_nodes > 0 and edge_index.numel() > 0:
+        adj[edge_index[0], edge_index[1]] = True
 
-    shortest_path_result, path = shortest_path_wrapper(adj)
-    if shortest_path_result.size > 0:
-        max_dist = np.amax(shortest_path_result)
+    # SciPy shortest path expects numpy array
+    shortest_path_result_np, path_np = shortest_path_wrapper(adj.cpu().numpy())
+    shortest_path_result = torch.from_numpy(shortest_path_result_np).to(device)
+    path = torch.from_numpy(path_np).to(device)
+    if shortest_path_result.numel() > 0:
+        max_dist = int(torch.amax(shortest_path_result).item())
     else:
         max_dist = UNREACHABLE_NODE_DISTANCE
 
@@ -178,16 +214,79 @@ def preprocess_item(
     # Cap the edge path depth to control tensor size and collation cost
     if input_edges.shape[2] > edge_max_dist:
         input_edges = input_edges[:, :, :edge_max_dist, :]
-    attn_bias = np.zeros([num_nodes + 1, num_nodes + 1], dtype=np.single)  # with graph token
+    # Truncate oversized graphs first (collator previously did this dynamically)
+    if max_nodes is not None and num_nodes > max_nodes:
+        input_nodes = input_nodes[:max_nodes, :]
+        attn_edge_type = attn_edge_type[:max_nodes, :max_nodes, :]
+        shortest_path_result = shortest_path_result[:max_nodes, :max_nodes]
+        # in/out degree recompute for truncated adjacency
+        adj = adj[:max_nodes, :max_nodes]
+        in_degree = adj.sum(dim=1).to(dtype=torch.long).view(-1) + 1
+        input_edges = input_edges[:max_nodes, :max_nodes, :, :]
+        num_nodes = max_nodes
+    else:
+        in_degree = adj.sum(dim=1).to(dtype=torch.long).view(-1) + 1
+
+    attn_bias = torch.zeros((num_nodes + 1, num_nodes + 1), dtype=torch.float32, device=device)  # with graph token
 
     # Combine
     item["input_nodes"] = input_nodes + 1  # Shift all indices by one for padding
     item["attn_bias"] = attn_bias
     item["attn_edge_type"] = attn_edge_type
-    item["spatial_pos"] = shortest_path_result.astype(np.int64) + 1  # Shift all indices by one for padding
-    item["in_degree"] = np.sum(adj, axis=1).reshape(-1) + 1  # Shift all indices by one for padding
+    item["spatial_pos"] = shortest_path_result.to(dtype=torch.long) + 1  # Shift all indices by one for padding
+    item["in_degree"] = in_degree  # already shifted
     item["out_degree"] = item["in_degree"]  # For undirected graph
     item["input_edges"] = input_edges + 1  # Shift all indices by one for padding
+
+    # Apply spatial position masking (replicates collator logic)
+    if spatial_pos_max is not None and item["spatial_pos"].numel() > 0:
+        # Note: exclude graph token (index 0 in attn_bias). We shift indices by 1 so compare on unshifted values.
+        spatial_pos_unshifted = item["spatial_pos"] - 1
+        mask = spatial_pos_unshifted >= spatial_pos_max
+        if torch.any(mask):
+            # Avoid touching the graph token row/col (0); attn_bias already has +1 size adjust
+            item["attn_bias"][1:, 1:][mask] = float("-inf")
+
+    # Pad to max_nodes for uniform shapes so default collator can stack directly
+    if pad_to_max_nodes and max_nodes is not None:
+        node_feat_size = item["input_nodes"].shape[1]
+        edge_feat_size = item["attn_edge_type"].shape[2]
+        edge_input_size = item["input_edges"].shape[-1]
+        edge_depth = item["input_edges"].shape[2]
+        cur_nodes = item["input_nodes"].shape[0]
+        if cur_nodes < max_nodes:
+            padded_attn_bias = torch.zeros((max_nodes + 1, max_nodes + 1), dtype=torch.float32, device=device)
+            padded_attn_bias[:cur_nodes + 1, :cur_nodes + 1] = item["attn_bias"]
+            item["attn_bias"] = padded_attn_bias
+
+            padded_nodes = torch.zeros((max_nodes, node_feat_size), dtype=torch.long, device=device)
+            padded_nodes[:cur_nodes, :] = item["input_nodes"]
+            item["input_nodes"] = padded_nodes
+
+            padded_edge_type = torch.zeros((max_nodes, max_nodes, edge_feat_size), dtype=torch.long, device=device)
+            padded_edge_type[:cur_nodes, :cur_nodes, :] = item["attn_edge_type"]
+            item["attn_edge_type"] = padded_edge_type
+
+            padded_spatial = torch.zeros((max_nodes, max_nodes), dtype=torch.long, device=device)
+            padded_spatial[:cur_nodes, :cur_nodes] = item["spatial_pos"]
+            item["spatial_pos"] = padded_spatial
+
+            padded_in_degree = torch.zeros((max_nodes,), dtype=torch.long, device=device)
+            padded_in_degree[:cur_nodes] = item["in_degree"]
+            item["in_degree"] = padded_in_degree
+            item["out_degree"] = padded_in_degree  # keep identical
+
+            padded_input_edges = torch.zeros((max_nodes, max_nodes, edge_depth, edge_input_size), dtype=torch.long, device=device)
+            padded_input_edges[:cur_nodes, :cur_nodes, :, :] = item["input_edges"]
+            item["input_edges"] = padded_input_edges
+
+    # Convert to tensors for safer downstream collation
+    keys = [
+        "attn_bias", "attn_edge_type", "spatial_pos", "in_degree", "out_degree", "input_nodes", "input_edges"
+    ]
+    if flatten:
+        flat = {k: item[k] for k in keys}
+        return flat
 
     if remove_extra_features:
         keys_to_remove = [k for k in item.keys() if k not in [
@@ -388,19 +487,31 @@ def preprocess_vg_for_graphormer(cfg: DictConfig) -> None:
                 image_path = os.path.join(cfg.image_base_path, f"{img_id}.jpg")
                 image = decode_image(image_path)
                 if image.shape[0] != 3:
+                    logging.warning(f"Image {img_id} has {image.shape[0]} channels, converting to 3-channel RGB.")
                     image = image.repeat(3, 1, 1)
                 images.append(image)
             except Exception:
+                logging.warning(f"Image {img_id} could not be loaded, using blank image instead.")
                 images.append(torch.zeros((3, 256, 256), dtype=torch.uint8))
 
         text = [t if t else "" for t in examples["sentences_raw"]]
         processed = processor(text=text, images=images, return_tensors="pt", 
                             padding="max_length", truncation=True)
-        
-        processed["graph_input"] = [
-            preprocess_item(ex, edge_max_dist=cfg.training.edge_max_dist, remove_extra_features=True)
+
+        # Preprocess each graph individually with padding & masking so default collator can stack nested dicts
+        graph_dicts = [
+            preprocess_item(
+                ex,
+                edge_max_dist=cfg.training.edge_max_dist,
+                spatial_pos_max=cfg.training.spatial_pos_max,
+                max_nodes=cfg.training.max_nodes,
+                remove_extra_features=True,
+                pad_to_max_nodes=True,
+                flatten=False,
+            )
             for ex in examples["graph_input"]
         ]
+        processed["graph_input"] = graph_dicts
         return processed
 
     for graph_type in cfg.model.graph_types:
