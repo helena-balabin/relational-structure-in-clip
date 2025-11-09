@@ -138,13 +138,24 @@ class GraphCLIPModel(CLIPModel):
         text_embeds = text_outputs[1]  # Pooled output
         text_embeds = self.text_projection(text_embeds)
 
-        # Process graph input through Graphormer (if provided)
+        # If explicit graph_input dict not provided, reconstruct from flattened keys (minimal adaptation for new preprocessing)
+        if graph_input is None:
+            flattened_keys = [
+                "input_nodes",
+                "attn_bias",
+                "attn_edge_type",
+                "spatial_pos",
+                "in_degree",
+                "out_degree",
+                "input_edges",
+            ]
+            if all(k in kwargs for k in flattened_keys):
+                graph_input = {k: kwargs.pop(k) for k in flattened_keys}
+
         graph_outputs = None
         graph_embeds = None
         if graph_input is not None:
-            graph_outputs = self.graph_model(
-                **graph_input,
-            )
+            graph_outputs = self.graph_model(**graph_input)
             # Use the special graph token for graph representation
             graph_embeds = graph_outputs.last_hidden_state[:, 0, :]
             graph_embeds = self.graph_projection(graph_embeds)

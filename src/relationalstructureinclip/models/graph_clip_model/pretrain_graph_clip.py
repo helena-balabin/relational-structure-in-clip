@@ -15,7 +15,6 @@ from transformers import (
     TrainingArguments,
 )
 
-from relationalstructureinclip.models.graph_clip_model.collator_graph_clip import GraphCLIPDataCollator
 from relationalstructureinclip.models.graph_clip_model.configuration_graph_clip import GraphCLIPConfig
 from relationalstructureinclip.models.graph_clip_model.modeling_graph_clip import GraphCLIPModel
 
@@ -181,10 +180,17 @@ def train_graph_image_model(cfg: DictConfig):
             mlflow.log_param("len_dataset", len(dataset))
 
             # Set the format to "torch" to load data into memory as tensors
-            # This avoids disk I/O bottlenecks during training
-            dataset.set_format(
-                "torch", columns=["input_ids", "attention_mask", "pixel_values", "graph_input"]
-            )
+            graph_cols = [
+                "input_nodes",
+                "attn_bias",
+                "attn_edge_type",
+                "spatial_pos",
+                "in_degree",
+                "out_degree",
+                "input_edges",
+            ]
+            cols = ["input_ids", "attention_mask", "pixel_values"] + graph_cols
+            dataset.set_format(type="torch", columns=cols)
 
             # Set a validation set aside
             dataset = dataset.train_test_split(test_size=cfg.data.validation_split, seed=cfg.data.seed)
@@ -249,12 +255,12 @@ def train_graph_image_model(cfg: DictConfig):
                 save_only_model=True,
                 hub_strategy="end",
                 metric_for_best_model="eval_loss",
-                lr_scheduler_type="linear",  # TODO eventually replace with constant
+                lr_scheduler_type=cfg.training.lr_scheduler_type,
                 warmup_ratio=warmup_ratio,
                 max_grad_norm=1.0,
                 bf16=use_bf16,
                 fp16=use_fp16,
-                remove_unused_columns=True,
+                remove_unused_columns=False,
             )
 
             warmup_steps = int(warmup_ratio_unfreeze * cfg.training.max_steps)
@@ -269,10 +275,6 @@ def train_graph_image_model(cfg: DictConfig):
                 args=training_args,
                 train_dataset=train_dataset,
                 eval_dataset=validation_dataset,
-                data_collator=GraphCLIPDataCollator(
-                    edge_max_dist=cfg.data.edge_max_dist,
-                    max_nodes=getattr(cfg.data, "max_nodes", None),
-                ),
                 callbacks=[gradual_cb, ClearCacheBeforeSaveCallback(), ExtraLossCallback()],
             )
             # Train the model

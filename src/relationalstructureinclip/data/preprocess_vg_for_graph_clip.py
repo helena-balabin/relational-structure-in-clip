@@ -211,9 +211,17 @@ def preprocess_item(
         max_dist = UNREACHABLE_NODE_DISTANCE
 
     input_edges = gen_edge_input(max_dist, path, attn_edge_type)
-    # Cap the edge path depth to control tensor size and collation cost
+    # Cap/pad the edge path depth to a fixed edge_max_dist for uniform batch shapes
     if input_edges.shape[2] > edge_max_dist:
         input_edges = input_edges[:, :, :edge_max_dist, :]
+    elif input_edges.shape[2] < edge_max_dist:
+        depth_deficit = edge_max_dist - int(input_edges.shape[2])
+        pad_block = torch.zeros(
+            (input_edges.shape[0], input_edges.shape[1], depth_deficit, input_edges.shape[3]),
+            dtype=input_edges.dtype,
+            device=input_edges.device,
+        )
+        input_edges = torch.cat([input_edges, pad_block], dim=2)
     # Truncate oversized graphs first (collator previously did this dynamically)
     if max_nodes is not None and num_nodes > max_nodes:
         input_nodes = input_nodes[:max_nodes, :]
@@ -252,7 +260,8 @@ def preprocess_item(
         node_feat_size = item["input_nodes"].shape[1]
         edge_feat_size = item["attn_edge_type"].shape[2]
         edge_input_size = item["input_edges"].shape[-1]
-        edge_depth = item["input_edges"].shape[2]
+        # Enforce fixed edge depth across all samples
+        edge_depth = edge_max_dist
         cur_nodes = item["input_nodes"].shape[0]
         if cur_nodes < max_nodes:
             padded_attn_bias = torch.zeros((max_nodes + 1, max_nodes + 1), dtype=torch.float32, device=device)
@@ -498,8 +507,8 @@ def preprocess_vg_for_graphormer(cfg: DictConfig) -> None:
         processed = processor(text=text, images=images, return_tensors="pt", 
                             padding="max_length", truncation=True)
 
-        # Preprocess each graph individually with padding & masking so default collator can stack nested dicts
-        graph_dicts = [
+        # Preprocess each graph with padding & masking and FLATTEN to top-level columns
+        flat_graphs = [
             preprocess_item(
                 ex,
                 edge_max_dist=cfg.training.edge_max_dist,
@@ -507,11 +516,15 @@ def preprocess_vg_for_graphormer(cfg: DictConfig) -> None:
                 max_nodes=cfg.training.max_nodes,
                 remove_extra_features=True,
                 pad_to_max_nodes=True,
-                flatten=False,
+                flatten=True,
             )
             for ex in examples["graph_input"]
         ]
-        processed["graph_input"] = graph_dicts
+        # Emit flat per-example columns so default collator can stack without a custom collator.
+        # (No prefix; keys assumed unique.)
+        if flat_graphs:
+            for k in flat_graphs[0].keys():
+                processed[k] = [fg[k] for fg in flat_graphs]
         return processed
 
     for graph_type in cfg.model.graph_types:

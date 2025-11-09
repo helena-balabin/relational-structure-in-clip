@@ -1,13 +1,11 @@
 output_dir: /data/huggingface/transformers
 
 data:
-  dataloader_num_workers: 8
+  dataloader_num_workers: 16
   local_dataset_identifier_processed: "/data/huggingface/datasets/vg-captions-graphs-processed/processed"
   seed: 42
   validation_split: 0.1
   remove_columns: ["coco_id", "flickr_id"]
-  max_nodes: 40
-  edge_max_dist: 20
 
 model:
   pretrained_model_name_or_path: "openai/clip-vit-base-patch32"
@@ -15,27 +13,28 @@ model:
   cache_dir: /data/huggingface/transformers/
   model_type: "image"
   graph_types: ["image", "spatial_image", "action_image"] # List of graph types to train models for
-  graphormer_size: "small"
-  dropout: 0.1
+  graphormer_size: "base"
+  dropout: 0.1 
   alpha: 0.5  # Set to 1.0 to only look at graph-image contrastive loss
 
 training:
   batch_size: 256 # 32 for debug, also 256 * 4 GPUs is effective batch size of 1024
   gradient_accumulation_steps: 1
   prefetch_factor: 1
-  learning_rate: 1e-4
+  learning_rate: 3e-4
   max_steps: 2500 # 100 steps for debug
   weight_decay: 0.0  # or 0.01
   logging_steps: 100 # 10 for debug
   eval_steps: 100  # 10 for debug
   save_steps: 500
   save_total_limit: 3
-  warmup_ratio: 0.0 # optional: set to 0.05
+  warmup_ratio: 0.05 # optional: set to 0.05
   warmup_ratio_unfreeze: 0.5
-  precision: "bf16" # options: "bf16", "fp16", "fp32"
+  precision: "fp32" # options: "bf16", "fp16", "fp32"
   pin_memory: true
   persistent_workers: true
   dataloader_drop_last: true
+  lr_scheduler_type: "linear"  # options: "linear", "constant", "cosine", etc.
 
 mlflow:
   tracking_uri: /data/mlflow/
