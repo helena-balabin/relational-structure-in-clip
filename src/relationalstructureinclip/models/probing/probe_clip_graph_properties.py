@@ -22,7 +22,7 @@ import hydra
 import mlflow
 import numpy as np
 import pandas as pd
-import scipy
+import scipy  # type: ignore
 import torch
 from datasets import load_dataset
 from himalaya.backend import set_backend
@@ -34,12 +34,21 @@ from sklearn.linear_model import RidgeClassifierCV
 from sklearn.metrics import accuracy_score, f1_score
 from sklearn.model_selection import KFold, StratifiedKFold
 from tqdm import tqdm
-from transformers import AutoModel, AutoProcessor
+from transformers import AutoModel, AutoConfig, AutoProcessor
+
+from relationalstructureinclip.models.graph_clip_model.configuration_graph_clip import GraphCLIPConfig
+from relationalstructureinclip.models.graph_clip_model.modeling_graph_clip import GraphCLIPModel
 
 logger = logging.getLogger(__name__)
 
 # Ignore sklearn warnings 
 warnings.filterwarnings("ignore", category=scipy.linalg.LinAlgWarning)
+# Make sure GraphCLIPModels can be loaded correctly
+# Register the configuration
+AutoConfig.register("graph_clip", GraphCLIPConfig)
+# Register the model
+AutoModel.register(GraphCLIPConfig, GraphCLIPModel)
+
 
 @dataclass
 class ProbeResult:
@@ -354,12 +363,14 @@ def _process_graph_columns(
             if len(filtered_labels) == 0:
                 logger.warning("No valid examples for task %s on %s, skipping", task.target, graph_col)
                 continue
-            
+
             # Log filtering statistics
-            logger.info("Task %s on %s: filtered from %d to %d examples (removed %d zeros)", 
-                       task.target, graph_col, len(labels), len(filtered_labels), 
-                       len(labels) - len(filtered_labels))
-            
+            logger.info(
+                "Task %s on %s: filtered from %d to %d examples (removed %d zeros)",
+                task.target, graph_col, len(labels), len(filtered_labels),
+                len(labels) - len(filtered_labels)
+            )
+
             # Log label statistics
             mlflow.log_metrics({
                 f"{graph_col}_{task.target}_mean": np.mean(filtered_labels),
