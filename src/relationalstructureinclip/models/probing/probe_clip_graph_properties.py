@@ -426,7 +426,7 @@ def _process_graph_columns(
             model_results[key] = averaged_metrics
 
 
-@hydra.main(config_path="../../../../config/model", config_name="probe_clip_graph_properties")
+@hydra.main(config_path="../../../../config/models", config_name="probe_clip_graph_properties")
 def main(cfg: DictConfig):
     """Main entry point for probing CLIP embeddings."""
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
