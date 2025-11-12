@@ -228,7 +228,11 @@ def _load_image(img_path):
 def _compute_clip_embeddings(model_id, texts, image_paths, model_cache_dir, batch_size=64):
 	"""Compute CLIP-like text and vision embeddings separately."""
 	device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-	processor = AutoProcessor.from_pretrained(model_id, cache_dir=model_cache_dir, use_fast=True)
+	processor = AutoProcessor.from_pretrained(
+        "openai/clip-vit-base-patch32" if "graph-clip" in model_id else model_id,
+        cache_dir=model_cache_dir,
+        use_fast=True,
+    )
 	model = AutoModel.from_pretrained(model_id, cache_dir=model_cache_dir).to(device)
 	model.eval()
 
