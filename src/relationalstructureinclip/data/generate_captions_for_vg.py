@@ -1,6 +1,8 @@
+""" "Generate captions for Visual Genome images using a BLIP model."""
+
 import logging
-from pathlib import Path
 from concurrent.futures import ProcessPoolExecutor
+from pathlib import Path
 
 import hydra
 import torch
@@ -13,7 +15,7 @@ from transformers import BlipForConditionalGeneration, BlipProcessor
 
 def get_image_path(vg_url: str, vg_dir: str) -> Path:
     """Convert a VG image URL to a local file path.
-    
+
     Args:
         vg_url (str): The URL of the VG image.
         vg_dir (str): The local directory where VG images are stored.
@@ -25,7 +27,7 @@ def get_image_path(vg_url: str, vg_dir: str) -> Path:
 
 def generate_for_batch(batch, model, processor, device, cfg):
     """Generate captions for a batch of images using a given model and device.
-    
+
     Args:
         batch: A batch of dataset examples containing image URLs.
         model: The caption generation model.
@@ -47,9 +49,11 @@ def generate_for_batch(batch, model, processor, device, cfg):
                 do_sample=True,  # Enable sampling
                 top_k=cfg.top_k,  # Top-k sampling
                 top_p=cfg.top_p,  # Top-p (nucleus) sampling
-                temperature=cfg.temperature  # Adjust temperature for diversity
+                temperature=cfg.temperature,  # Adjust temperature for diversity
             )
-            caption = processor.batch_decode(outputs, skip_special_tokens=True)[0]
+            caption = processor.batch_decode(
+                outputs, skip_special_tokens=True
+            )[0]
             captions.append(caption)
         all_captions.append(captions)
     return all_captions
@@ -57,7 +61,7 @@ def generate_for_batch(batch, model, processor, device, cfg):
 
 def process_chunk(chunk, cfg, gpu_id):
     """Worker function: each GPU gets one chunk of the dataset.
-    
+
     Args:
         chunk: A chunk of the dataset to process.
         cfg: Configuration object with parameters.
@@ -65,9 +69,13 @@ def process_chunk(chunk, cfg, gpu_id):
     """
     device = torch.device(f"cuda:{gpu_id}")
     # Load model and processor once per GPU
-    model = BlipForConditionalGeneration.from_pretrained(cfg.model_name, cache_dir=cfg.model_cache_dir).to(device)
+    model = BlipForConditionalGeneration.from_pretrained(
+        cfg.model_name, cache_dir=cfg.model_cache_dir
+    ).to(device)
     model.eval()
-    processor = BlipProcessor.from_pretrained(cfg.model_name, cache_dir=cfg.model_cache_dir, use_fast=True)
+    processor = BlipProcessor.from_pretrained(
+        cfg.model_name, cache_dir=cfg.model_cache_dir, use_fast=True
+    )
 
     all_results = []
     # Process the chunk in batches
@@ -76,8 +84,10 @@ def process_chunk(chunk, cfg, gpu_id):
         desc=f"GPU {gpu_id}",
         total=len(chunk) // cfg.batch_size,
     ):
-        batch = chunk[batch_start: batch_start + cfg.batch_size]
-        batch_captions = generate_for_batch(batch, model, processor, device, cfg)
+        batch = chunk[batch_start : batch_start + cfg.batch_size]
+        batch_captions = generate_for_batch(
+            batch, model, processor, device, cfg
+        )
         all_results.extend(batch_captions)
     return all_results
 
@@ -89,14 +99,16 @@ def process_chunk(chunk, cfg, gpu_id):
 )
 def generate_captions(cfg: DictConfig):
     """Generate captions for Visual Genome images using a BLIP model.
-    
+
     Args:
         cfg (DictConfig): Configuration object with parameters.
     """
     logging.basicConfig(level=logging.INFO)
 
     # Load dataset and filter out images already matched to COCO
-    dataset = load_dataset(cfg.dataset_name, split=cfg.split, cache_dir=cfg.data_cache_dir)
+    dataset = load_dataset(
+        cfg.dataset_name, split=cfg.split, cache_dir=cfg.data_cache_dir
+    )
     dataset = dataset.filter(lambda x: x["coco_id"] is None)
 
     # Split dataset into N chunks (N = number of GPUs)
@@ -106,7 +118,10 @@ def generate_captions(cfg: DictConfig):
     # Use ProcessPoolExecutor to assign one process per GPU
     results = []
     with ProcessPoolExecutor(max_workers=n_gpus) as executor:
-        futures = [executor.submit(process_chunk, chunks[i], cfg, i) for i in range(n_gpus)]
+        futures = [
+            executor.submit(process_chunk, chunks[i], cfg, i)
+            for i in range(n_gpus)
+        ]
         for f in futures:
             results.extend(f.result())
 
@@ -115,7 +130,9 @@ def generate_captions(cfg: DictConfig):
 
     # Flatten the dataset so total examples = num_images * num_captions
     dataset = dataset.flatten_indices()
-    dataset = dataset.map(lambda x: {"caption": x["captions"]}, remove_columns=["captions"])
+    dataset = dataset.map(
+        lambda x: {"caption": x["captions"]}, remove_columns=["captions"]
+    )
 
     # Log some examples
     for i in range(min(cfg.n_examples, len(dataset))):

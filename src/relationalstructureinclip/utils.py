@@ -1,6 +1,6 @@
 """Utils module.
 
-This module provides utility functions for the 
+This module provides utility functions for the
 relationalstructureinclip project.
 
 Functions:

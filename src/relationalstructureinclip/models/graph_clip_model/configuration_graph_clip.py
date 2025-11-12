@@ -1,10 +1,11 @@
-
 """Configuration class for the custom Graph-based CLIP model incorporating Image, Text, and Graph inputs."""
 
 from typing import Optional, Union
 
 from transformers import CLIPConfig
-from transformers.models.deprecated.graphormer.configuration_graphormer import GraphormerConfig
+from transformers.models.deprecated.graphormer.configuration_graphormer import (
+    GraphormerConfig,
+)
 
 
 class GraphCLIPConfig(CLIPConfig):
@@ -47,7 +48,7 @@ class GraphCLIPConfig(CLIPConfig):
         **kwargs,
     ):
         """Initialize the GraphCLIPConfig.
-        
+
         Args:
             graph_config (Union[dict, GraphormerConfig]): Configuration for the Graphormer
             graph_pair_type (str, optional): Modality to pair with graph. Defaults to "text".
@@ -69,7 +70,9 @@ class GraphCLIPConfig(CLIPConfig):
 
         # which modality to pair the graph with
         if graph_pair_type not in ("text", "image"):
-            raise ValueError("`graph_pair_type` must be either 'text' or 'image'")
+            raise ValueError(
+                "`graph_pair_type` must be either 'text' or 'image'"
+            )
         self.graph_pair_type = graph_pair_type
 
         # if provided, load CLIP vision/text from this checkpoint

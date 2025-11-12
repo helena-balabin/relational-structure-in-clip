@@ -168,15 +168,16 @@ def main():
             if file.endswith(".pkl") and not validate_model_file_naming(file):
                 print(f"Invalid model file naming convention: {file}")
                 error = True
-            elif file.endswith((".ipynb", ".py")) and not \
-                validate_ml_file_naming(file):
+            elif file.endswith(
+                (".ipynb", ".py")
+            ) and not validate_ml_file_naming(file):
                 print(f"Invalid notebook/script naming convention: {file}")
                 error = True
-            elif file.endswith((".csv", ".xlsx", ".json")) and \
-                 not validate_data_file_naming(file):
+            elif file.endswith(
+                (".csv", ".xlsx", ".json")
+            ) and not validate_data_file_naming(file):
                 print(f"Invalid data file naming convention: {file}")
                 error = True
-
 
     if error:
         sys.exit(1)

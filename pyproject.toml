@@ -5,12 +5,12 @@ build-backend = "poetry.core.masonry.api"
 [tool.black]
 line-length = 79
 target-version = ["py312"]
-include = """
+include = '''
 (
-    ^notebooks/.*\\.ipynb$
-  | ^src/.*\\.py$
+    ^notebooks/.*\.ipynb$
+  | \.pyi?$
 )
-"""
+'''
 
 [tool.poetry]
 name = "relationalstructureinclip"

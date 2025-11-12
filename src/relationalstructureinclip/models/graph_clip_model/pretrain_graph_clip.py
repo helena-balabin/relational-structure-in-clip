@@ -15,8 +15,12 @@ from transformers import (
     TrainingArguments,
 )
 
-from relationalstructureinclip.models.graph_clip_model.configuration_graph_clip import GraphCLIPConfig
-from relationalstructureinclip.models.graph_clip_model.modeling_graph_clip import GraphCLIPModel
+from relationalstructureinclip.models.graph_clip_model.configuration_graph_clip import (
+    GraphCLIPConfig,
+)
+from relationalstructureinclip.models.graph_clip_model.modeling_graph_clip import (
+    GraphCLIPModel,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -26,7 +30,9 @@ class ExtraLoggingTrainer(Trainer):
     """
     Trainer that logs extra model outputs (like extra losses) in sync with normal logging.
     """
+
     def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
+        """Compute loss and store extra outputs in TrainerState for callback access."""
         # Forward pass
         outputs = model(**inputs)
         loss = outputs["loss"]
@@ -36,10 +42,12 @@ class ExtraLoggingTrainer(Trainer):
 
         return (loss, outputs) if return_outputs else loss
 
+
 class ExtraLossCallback(TrainerCallback):
     """Logs extra losses to MLflow at the same frequency as normal Trainer logs, separated for train/eval."""
 
     def on_log(self, args, state, control, logs=None, **kwargs):
+        """Log extra losses to MLflow."""
         if logs is None or not mlflow.active_run():
             return
 
@@ -48,7 +56,11 @@ class ExtraLossCallback(TrainerCallback):
             return
 
         # Determine phase by checking if any eval key exists
-        prefix = "eval" if any(k.startswith("eval_") for k in logs.keys()) else "train"
+        prefix = (
+            "eval"
+            if any(k.startswith("eval_") for k in logs.keys())
+            else "train"
+        )
 
         for key in ["loss_graph_pair", "loss_image_text"]:
             val_tensor = getattr(outputs, key, None)
@@ -57,7 +69,7 @@ class ExtraLossCallback(TrainerCallback):
                 metric_name = f"{prefix}_{key}"
                 logs[metric_name] = val
                 mlflow.log_metric(metric_name, val, step=state.global_step)
-                
+
 
 class WarmupGradualUnfreezeCallback(TrainerCallback):
     """Warmup graph-only training, then gradually unfreeze backbone layers; unfreeze CLIP heads at first step."""
@@ -69,7 +81,7 @@ class WarmupGradualUnfreezeCallback(TrainerCallback):
         warmup_steps: int,
     ):
         """Initialize the callback.
-        
+
         Args:
             model: The model being trained.
             cfg: Configuration dictionary.
@@ -85,14 +97,20 @@ class WarmupGradualUnfreezeCallback(TrainerCallback):
     def on_train_begin(self, args, state, control, **kwargs):
         """Freeze layers at the start of training (graph-only warmup)."""
         # Freeze vision/text completely (graph stays trainable) and also freeze CLIP heads (projections + logit_scale)
-        self.model.freeze_layers(freeze_vision=True, freeze_text=True, freeze_graph=False)
+        self.model.freeze_layers(
+            freeze_vision=True, freeze_text=True, freeze_graph=False
+        )
         self.model.freeze_projection_and_temperature(True)
         # Use model config for backbone selection to avoid mismatch
         backbone_type = getattr(self.model, "graph_pair_type", "text")
         if backbone_type == "image":
-            self.total_layers = len(self.model.vision_model.vision_model.encoder.layers)
+            self.total_layers = len(
+                self.model.vision_model.vision_model.encoder.layers
+            )
         else:
-            self.total_layers = len(self.model.text_model.text_model.encoder.layers)
+            self.total_layers = len(
+                self.model.text_model.text_model.encoder.layers
+            )
 
     def _unfreeze(self, num_layers):
         """Unfreeze a specified number of layers; unfreeze CLIP heads at the first step."""
@@ -115,28 +133,36 @@ class WarmupGradualUnfreezeCallback(TrainerCallback):
             return control
 
         # Calculate the proportion of training that is past the warmup phase
-        progress = (state.global_step - self.warmup_steps) / (state.max_steps - self.warmup_steps)
-        
+        progress = (state.global_step - self.warmup_steps) / (
+            state.max_steps - self.warmup_steps
+        )
+
         # Unfreeze a proportional number of layers
         layers_to_unfreeze = int(progress * self.total_layers)
-        
+
         if layers_to_unfreeze > self.current_unfrozen:
             self._unfreeze(layers_to_unfreeze)
-            
+
         return control
 
 
 class ClearCacheBeforeSaveCallback(TrainerCallback):
-    def on_save(self, args, state, control, **kwargs):  # pylint: disable=unused-argument
+    """Clear CUDA cache before saving the model to free up memory."""
+
+    def on_save(
+        self, args, state, control, **kwargs
+    ):  # pylint: disable=unused-argument
         """Clear CUDA cache before saving the model to free up memory."""
         torch.cuda.empty_cache()
         return control
 
 
-@hydra.main(config_path="../../../../config/models", config_name="pretrain_graph_clip")
+@hydra.main(
+    config_path="../../../../config/models", config_name="pretrain_graph_clip"
+)
 def train_graph_image_model(cfg: DictConfig):
     """Train GraphCLIP models for different graph types as specified in the config.
-    
+
     Args:
         cfg (DictConfig): Hydra configuration dictionary containing training parameters.
     """
@@ -145,7 +171,11 @@ def train_graph_image_model(cfg: DictConfig):
     mlflow.set_experiment(cfg.mlflow.experiment_name)
 
     # Get the list of graph types to train on
-    graph_types = cfg.model.graph_types if hasattr(cfg.model, "graph_types") else ["image"]
+    graph_types = (
+        cfg.model.graph_types
+        if hasattr(cfg.model, "graph_types")
+        else ["image"]
+    )
 
     logger.info(f"Training models for graph types: {graph_types}")
 
@@ -168,11 +198,17 @@ def train_graph_image_model(cfg: DictConfig):
 
             # Load preprocessed data
             dataset = load_from_disk(
-                cfg.data.local_dataset_identifier_processed + "-" + target_graph_column.replace("_", "-")
+                cfg.data.local_dataset_identifier_processed
+                + "-"
+                + target_graph_column.replace("_", "-")
             )
             # Remove the columns from cfg.data.remove_columns if they exist
             if hasattr(cfg.data, "remove_columns"):
-                cols_to_remove = [col for col in cfg.data.remove_columns if col in dataset.column_names]
+                cols_to_remove = [
+                    col
+                    for col in cfg.data.remove_columns
+                    if col in dataset.column_names
+                ]
                 if cols_to_remove:
                     dataset = dataset.remove_columns(cols_to_remove)
 
@@ -193,7 +229,9 @@ def train_graph_image_model(cfg: DictConfig):
             dataset.set_format(type="torch", columns=cols)
 
             # Set a validation set aside
-            dataset = dataset.train_test_split(test_size=cfg.data.validation_split, seed=cfg.data.seed)
+            dataset = dataset.train_test_split(
+                test_size=cfg.data.validation_split, seed=cfg.data.seed
+            )
             # Not to be confused with the train/test split from the load_dataset function
             train_dataset = dataset["train"]
             validation_dataset = dataset["test"]
@@ -226,12 +264,20 @@ def train_graph_image_model(cfg: DictConfig):
             model.to(device)
 
             warmup_ratio = getattr(cfg.training, "warmup_ratio", 0.05)
-            warmup_ratio_unfreeze = getattr(cfg.training, "warmup_ratio_unfreeze", 0.5)
-            use_bf16 = (cfg.training.precision == "bf16") and torch.cuda.is_available()
-            use_fp16 = (cfg.training.precision == "fp16") and torch.cuda.is_available()
+            warmup_ratio_unfreeze = getattr(
+                cfg.training, "warmup_ratio_unfreeze", 0.5
+            )
+            use_bf16 = (
+                cfg.training.precision == "bf16"
+            ) and torch.cuda.is_available()
+            use_fp16 = (
+                cfg.training.precision == "fp16"
+            ) and torch.cuda.is_available()
 
             training_args = TrainingArguments(
-                output_dir=os.path.join(cfg.output_dir, f"graph-clip-{graph_type}"),
+                output_dir=os.path.join(
+                    cfg.output_dir, f"graph-clip-{graph_type}"
+                ),
                 eval_strategy="steps",
                 eval_steps=cfg.training.eval_steps,
                 save_strategy="steps",
@@ -248,7 +294,11 @@ def train_graph_image_model(cfg: DictConfig):
                 dataloader_pin_memory=cfg.training.pin_memory,
                 dataloader_drop_last=cfg.training.dataloader_drop_last,
                 weight_decay=cfg.training.weight_decay,
-                logging_dir=os.path.join(cfg.output_dir, f"graph-clip-{graph_type.replace('_', '-')}", "logs"),
+                logging_dir=os.path.join(
+                    cfg.output_dir,
+                    f"graph-clip-{graph_type.replace('_', '-')}",
+                    "logs",
+                ),
                 logging_steps=cfg.training.logging_steps,
                 save_total_limit=cfg.training.save_total_limit,
                 save_safetensors=True,
@@ -275,16 +325,26 @@ def train_graph_image_model(cfg: DictConfig):
                 args=training_args,
                 train_dataset=train_dataset,
                 eval_dataset=validation_dataset,
-                callbacks=[gradual_cb, ClearCacheBeforeSaveCallback(), ExtraLossCallback()],
+                callbacks=[
+                    gradual_cb,
+                    ClearCacheBeforeSaveCallback(),
+                    ExtraLossCallback(),
+                ],
             )
             # Train the model
             trainer.train()
 
             # Save and push the final model
             if trainer.is_world_process_zero():
-                model_save_path = os.path.join(cfg.output_dir, f"graph-clip-model-{graph_type}")
+                model_save_path = os.path.join(
+                    cfg.output_dir, f"graph-clip-model-{graph_type}"
+                )
                 trainer.save_model(model_save_path)
-                model.push_to_hub(cfg.model.huggingface_hub_model_id + "-" + graph_type.replace("_", "-"))
+                model.push_to_hub(
+                    cfg.model.huggingface_hub_model_id
+                    + "-"
+                    + graph_type.replace("_", "-")
+                )
 
             logger.info(f"Successfully trained model for {graph_type}")
 

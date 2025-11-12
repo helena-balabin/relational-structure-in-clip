@@ -5,11 +5,22 @@ from typing import Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
-from transformers import CLIPModel, CLIPTextModel, CLIPVisionModel, GraphormerModel
-from transformers.modeling_outputs import BaseModelOutputWithNoAttention, BaseModelOutputWithPooling, ModelOutput
+from transformers import (
+    CLIPModel,
+    CLIPTextModel,
+    CLIPVisionModel,
+    GraphormerModel,
+)
+from transformers.modeling_outputs import (
+    BaseModelOutputWithNoAttention,
+    BaseModelOutputWithPooling,
+    ModelOutput,
+)
 from transformers.models.clip.modeling_clip import clip_loss
 
-from relationalstructureinclip.models.graph_clip_model.configuration_graph_clip import GraphCLIPConfig
+from relationalstructureinclip.models.graph_clip_model.configuration_graph_clip import (
+    GraphCLIPConfig,
+)
 
 
 @dataclass
@@ -46,11 +57,12 @@ class GraphCLIPOutput(ModelOutput):
 
 class GraphCLIPModel(CLIPModel):
     """GraphCLIP Model integrating Graphormer + CLIP for contrastive learning in Image, Text, and Graph modalities."""
+
     config_class = GraphCLIPConfig
 
     def __init__(self, config: GraphCLIPConfig):
         """Initialize the GraphCLIPModel.
-        
+
         config (GraphCLIPConfig): Configuration for the GraphCLIP model.
         """
         # Specify configs
@@ -80,10 +92,14 @@ class GraphCLIPModel(CLIPModel):
             self.graph_model = GraphormerModel._from_config(graph_config)
 
         # Projection layer for graph embeddings
-        self.graph_projection = nn.Linear(graph_config.hidden_size, config.projection_dim, bias=False)
+        self.graph_projection = nn.Linear(
+            graph_config.hidden_size, config.projection_dim, bias=False
+        )
 
         # Determine the graph pair type (either "text" or "image")
-        self.graph_pair_type = config.graph_pair_type  # Should be "text" or "image"
+        self.graph_pair_type = (
+            config.graph_pair_type
+        )  # Should be "text" or "image"
 
     def forward(
         self,
@@ -116,7 +132,11 @@ class GraphCLIPModel(CLIPModel):
         Returns:
             GraphCLIPOutput: Custom output object containing logits and embeddings.
         """
-        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+        return_dict = (
+            return_dict
+            if return_dict is not None
+            else self.config.use_return_dict
+        )
 
         # Process images through the CLIP vision encoder
         vision_outputs = self.vision_model(
@@ -138,7 +158,8 @@ class GraphCLIPModel(CLIPModel):
         text_embeds = text_outputs[1]  # Pooled output
         text_embeds = self.text_projection(text_embeds)
 
-        # If explicit graph_input dict not provided, reconstruct from flattened keys (minimal adaptation for new preprocessing)
+        # If explicit graph_input dict not provided, reconstruct from flattened keys
+        # (minimal adaptation for new preprocessing)
         if graph_input is None:
             flattened_keys = [
                 "input_nodes",
@@ -161,24 +182,36 @@ class GraphCLIPModel(CLIPModel):
             graph_embeds = self.graph_projection(graph_embeds)
 
         # Normalize the projected features
-        image_embeds = image_embeds / image_embeds.norm(p=2, dim=-1, keepdim=True)
+        image_embeds = image_embeds / image_embeds.norm(
+            p=2, dim=-1, keepdim=True
+        )
         text_embeds = text_embeds / text_embeds.norm(p=2, dim=-1, keepdim=True)
         if graph_embeds is not None:
-            graph_embeds = graph_embeds / graph_embeds.norm(p=2, dim=-1, keepdim=True)
+            graph_embeds = graph_embeds / graph_embeds.norm(
+                p=2, dim=-1, keepdim=True
+            )
 
         # Compute scaled cosine similarity logits
         logit_scale = self.logit_scale.exp()
-        logits_image_text = logit_scale * torch.matmul(image_embeds, text_embeds.t())
+        logits_image_text = logit_scale * torch.matmul(
+            image_embeds, text_embeds.t()
+        )
 
         # Compute graph pair logits based on the specified pair type (if graph input is provided)
         logits_graph_pair = None
         if graph_embeds is not None:
             if self.graph_pair_type == "text":
-                logits_graph_pair = logit_scale * torch.matmul(graph_embeds, text_embeds.t())
+                logits_graph_pair = logit_scale * torch.matmul(
+                    graph_embeds, text_embeds.t()
+                )
             elif self.graph_pair_type == "image":
-                logits_graph_pair = logit_scale * torch.matmul(graph_embeds, image_embeds.t())
+                logits_graph_pair = logit_scale * torch.matmul(
+                    graph_embeds, image_embeds.t()
+                )
             else:
-                raise ValueError("Invalid graph_pair_type. Must be 'text' or 'image'.")
+                raise ValueError(
+                    "Invalid graph_pair_type. Must be 'text' or 'image'."
+                )
 
         loss = None
         loss_graph_pair = None
@@ -187,7 +220,9 @@ class GraphCLIPModel(CLIPModel):
             loss_image_text = clip_loss(logits_image_text)
             if logits_graph_pair is not None:
                 loss_graph_pair = clip_loss(logits_graph_pair)
-                loss = (1.0 - self.alpha) * loss_image_text + self.alpha * loss_graph_pair
+                loss = (
+                    1.0 - self.alpha
+                ) * loss_image_text + self.alpha * loss_graph_pair
             else:
                 loss = loss_image_text
 
@@ -220,8 +255,14 @@ class GraphCLIPModel(CLIPModel):
             graph_model_output=graph_outputs,
         )
 
-    def freeze_layers(self, freeze_vision: bool = False, freeze_text: bool = False, freeze_graph: bool = False):
+    def freeze_layers(
+        self,
+        freeze_vision: bool = False,
+        freeze_text: bool = False,
+        freeze_graph: bool = False,
+    ):
         """Freeze/unfreeze modality backbones (not heads)."""
+
         def set_requires_grad(module, flag: bool):
             for p in module.parameters():
                 p.requires_grad = flag
@@ -255,7 +296,9 @@ class GraphCLIPModel(CLIPModel):
         if model_part == "vision":
             vm = self.vision_model.vision_model
             layers = list(vm.encoder.layers)
-            final_norm = getattr(vm, "post_layernorm", None) or getattr(vm, "final_layer_norm", None)
+            final_norm = getattr(vm, "post_layernorm", None) or getattr(
+                vm, "final_layer_norm", None
+            )
             embeddings = getattr(vm, "embeddings", None)
             root_module = self.vision_model
         else:
