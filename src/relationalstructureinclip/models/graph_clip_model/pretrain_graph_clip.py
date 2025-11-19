@@ -9,13 +9,13 @@ import numpy as np
 import torch
 from datasets import load_from_disk
 from omegaconf import DictConfig
+from sklearn.model_selection import train_test_split
 from transformers import (
     GraphormerConfig,
     Trainer,
     TrainerCallback,
     TrainingArguments,
 )
-from sklearn.model_selection import train_test_split
 
 from relationalstructureinclip.models.graph_clip_model.configuration_graph_clip import (
     GraphCLIPConfig,
@@ -36,7 +36,9 @@ class ExtraTrainer(Trainer):
     """
     Trainer that logs extra model outputs (like extra losses) in sync with normal logging.
     """
+
     def __init__(self, *args, **kwargs):
+        """Initialize ExtraTrainer."""
         super().__init__(*args, **kwargs)
 
     def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
@@ -93,13 +95,21 @@ class ExtraCallback(TrainerCallback):
 
     def on_evaluate(self, args, state, control, **kwargs):
         """Perform probing task evaluation on cached embeddings and log results to MLflow."""
-        if not state.last_embeddings or len(state.last_embeddings) == 0:  # Check if we have data
-            logger.info("No embeddings cached for evaluation; skipping probing task.")
+        if (
+            not state.last_embeddings or len(state.last_embeddings) == 0
+        ):  # Check if we have data
+            logger.info(
+                "No embeddings cached for evaluation; skipping probing task."
+            )
             return super().on_evaluate(args, state, control, **kwargs)
 
         # Stack tensors and convert to numpy
-        embeddings = torch.cat(state.last_embeddings, dim=0).detach().cpu().numpy()
-        num_nodes = torch.cat(state.last_num_nodes, dim=0).detach().cpu().numpy()
+        embeddings = (
+            torch.cat(state.last_embeddings, dim=0).detach().cpu().numpy()
+        )
+        num_nodes = (
+            torch.cat(state.last_num_nodes, dim=0).detach().cpu().numpy()
+        )
         # Train/test split for probing task
         emb_train, emb_test, nodes_train, nodes_test = train_test_split(
             embeddings,
@@ -107,7 +117,10 @@ class ExtraCallback(TrainerCallback):
             test_size=0.3,
             random_state=42,
         )
-        for split_name, split_values in (("train", nodes_train), ("test", nodes_test)):
+        for split_name, split_values in (
+            ("train", nodes_train),
+            ("test", nodes_test),
+        ):
             if split_values.size and np.all(split_values == split_values[0]):
                 logger.warning(
                     "No variance in %s num_nodes split; constant value %s",
@@ -133,7 +146,11 @@ class ExtraCallback(TrainerCallback):
         )
         # Log probing results to MLflow
         for metric_name, metric_value in probe_result.items():
-            mlflow.log_metric(f"eval_probe_num_nodes_{metric_name}", metric_value, step=state.global_step)
+            mlflow.log_metric(
+                f"eval_probe_num_nodes_{metric_name}",
+                metric_value,
+                step=state.global_step,
+            )
 
         # Clear the cache for next evaluation
         state.last_embeddings = []
