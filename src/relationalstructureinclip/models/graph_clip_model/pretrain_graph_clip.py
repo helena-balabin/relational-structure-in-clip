@@ -112,8 +112,9 @@ class ExtraTrainer(Trainer):
     Trainer that logs extra model outputs (like extra losses) in sync with normal logging.
     """
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, enable_graph_probing=True, *args, **kwargs):
         """Initialize ExtraTrainer."""
+        self.enable_graph_probing = enable_graph_probing
         super().__init__(*args, **kwargs)
 
     def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
@@ -130,7 +131,7 @@ class ExtraTrainer(Trainer):
         }
         # Also store (pooled) graph embeddings and graph properties in TrainerState
         # Cache during evaluation only
-        if not model.training:
+        if not model.training and self.enable_graph_probing:
             if not hasattr(self.state, "last_embeddings"):
                 self.state.last_embeddings = []
             if not hasattr(self.state, "last_num_nodes"):
@@ -400,6 +401,9 @@ def train_graph_image_model(cfg: DictConfig):
             )
 
             trainer = ExtraTrainer(
+                enable_graph_probing=cfg.training.get(
+                    "enable_graph_probing", False
+                ),
                 model=model,
                 args=training_args,
                 train_dataset=train_dataset,
