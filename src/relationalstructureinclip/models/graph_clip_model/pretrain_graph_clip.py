@@ -32,6 +32,81 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+class WarmupGradualUnfreezeCallback(TrainerCallback):
+    """Warmup graph-only training, then gradually unfreeze backbone layers; unfreeze CLIP heads at first step."""
+
+    def __init__(
+        self,
+        model,
+        cfg,
+        warmup_steps: int,
+    ):
+        """Initialize the callback.
+
+        Args:
+            model: The model being trained.
+            cfg: Configuration dictionary.
+            warmup_steps (int): Number of warmup steps before unfreezing.
+        """
+        self.model = model
+        self.cfg = cfg
+        self.warmup_steps = warmup_steps
+        self.total_layers = None
+        self.current_unfrozen = 0
+        self.fully_unfrozen = False
+
+    def on_train_begin(self, args, state, control, **kwargs):
+        """Freeze layers at the start of training (graph-only warmup)."""
+        # Freeze vision/text completely (graph stays trainable) and also freeze CLIP heads (projections + logit_scale)
+        self.model.freeze_layers(
+            freeze_vision=True, freeze_text=True, freeze_graph=False
+        )
+        self.model.freeze_projection_and_temperature(True)
+        # Use model config for backbone selection to avoid mismatch
+        backbone_type = getattr(self.model, "graph_pair_type", "text")
+        if backbone_type == "image":
+            self.total_layers = len(
+                self.model.vision_model.vision_model.encoder.layers
+            )
+        else:
+            self.total_layers = len(
+                self.model.text_model.text_model.encoder.layers
+            )
+
+    def _unfreeze(self, num_layers):
+        """Unfreeze a specified number of layers; unfreeze CLIP heads at the first step."""
+        target = min(num_layers, self.total_layers)
+        backbone_type = getattr(self.model, "graph_pair_type", "text")
+        # If we're moving from 0 -> >=1, unfreeze projection heads and temperature right away
+        if self.current_unfrozen == 0 and target >= 1:
+            self.model.freeze_projection_and_temperature(False)
+        if backbone_type == "image":
+            self.model.unfreeze_partial_layers("vision", target)
+        else:
+            self.model.unfreeze_partial_layers("text", target)
+        self.current_unfrozen = target
+        if self.current_unfrozen >= self.total_layers:
+            self.fully_unfrozen = True
+
+    def on_step_end(self, args, state, control, **kwargs):
+        """Gradually unfreeze layers after warmup."""
+        if state.global_step < self.warmup_steps or self.fully_unfrozen:
+            return control
+
+        # Calculate the proportion of training that is past the warmup phase
+        progress = (state.global_step - self.warmup_steps) / (
+            state.max_steps - self.warmup_steps
+        )
+
+        # Unfreeze a proportional number of layers
+        layers_to_unfreeze = int(progress * self.total_layers)
+
+        if layers_to_unfreeze > self.current_unfrozen:
+            self._unfreeze(layers_to_unfreeze)
+
+        return control
+
+
 class ExtraTrainer(Trainer):
     """
     Trainer that logs extra model outputs (like extra losses) in sync with normal logging.
@@ -312,6 +387,16 @@ def train_graph_image_model(cfg: DictConfig):
                 remove_unused_columns=False,
             )
 
+            warmup_ratio_unfreeze = getattr(
+                cfg.training, "warmup_ratio_unfreeze", 0.5
+            )
+            warmup_steps = int(warmup_ratio_unfreeze * cfg.training.max_steps)
+            gradual_cb = WarmupGradualUnfreezeCallback(
+                model=model,
+                cfg=cfg,
+                warmup_steps=warmup_steps,
+            )
+
             trainer = ExtraTrainer(
                 model=model,
                 args=training_args,
@@ -319,6 +404,7 @@ def train_graph_image_model(cfg: DictConfig):
                 eval_dataset=validation_dataset,
                 callbacks=[
                     ExtraCallback(),
+                    gradual_cb,
                 ],
             )
             # Train the model
