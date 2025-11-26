@@ -9,6 +9,7 @@ data:
 
 model:
   pretrained_model_name_or_path: "openai/clip-vit-base-patch32"
+  pretrained_graphormer_hub_id: "clefourrier/graphormer-base-pcqm4mv2"
   huggingface_hub_model_id: "helena-balabin/graph-clip"
   cache_dir: /data/huggingface/transformers/
   model_type: "image"
@@ -20,7 +21,7 @@ model:
 training:
   batch_size: 256 # 32 for debug, also 256 * 4 GPUs is effective batch size of 1024
   gradient_accumulation_steps: 1
-  prefetch_factor: 1
+  prefetch_factor: 4  # Increased from 1 to 4 for better pipeline utilization
   learning_rate: 3e-4
   max_steps: 2500 # 100 steps for debug
   weight_decay: 0.0  # or 0.01
@@ -35,7 +36,7 @@ training:
   persistent_workers: true
   dataloader_drop_last: true
   lr_scheduler_type: "linear"  # options: "linear", "constant", "cosine", etc.
-  enable_graph_probing: true
+  enable_graph_probing: false
 
 mlflow:
   tracking_uri: /data/mlflow/

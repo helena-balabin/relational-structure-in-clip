@@ -2,6 +2,7 @@
 
 import logging
 import os
+from typing import Any, Dict, List
 
 import hydra
 import mlflow
@@ -147,6 +148,14 @@ class ExtraTrainer(Trainer):
 class ExtraCallback(TrainerCallback):
     """Logs extra losses to MLflow at the same frequency as normal Trainer logs, separated for train/eval."""
 
+    def __init__(self, enable_graph_probing=True):
+        """Initialize the callback.
+
+        Args:
+            enable_graph_probing (bool): Whether to enable graph probing during evaluation.
+        """
+        self.enable_graph_probing = enable_graph_probing
+
     def on_log(self, args, state, control, logs=None, **kwargs):
         """Log extra losses to MLflow."""
         if logs is None or not mlflow.active_run():
@@ -170,9 +179,10 @@ class ExtraCallback(TrainerCallback):
 
     def on_evaluate(self, args, state, control, **kwargs):
         """Perform probing task evaluation on cached embeddings and log results to MLflow."""
-        if (
-            not state.last_embeddings or len(state.last_embeddings) == 0
-        ):  # Check if we have data
+        if not self.enable_graph_probing:
+            return super().on_evaluate(args, state, control, **kwargs)
+
+        if not state.last_embeddings or len(state.last_embeddings) == 0:
             logger.info(
                 "No embeddings cached for evaluation; skipping probing task."
             )
@@ -292,19 +302,6 @@ def train_graph_image_model(cfg: DictConfig):
             # Log the number of samples in the dataset
             mlflow.log_param("len_dataset", len(dataset))
 
-            # Set the format to "torch" to load data into memory as tensors
-            graph_cols = [
-                "input_nodes",
-                "attn_bias",
-                "attn_edge_type",
-                "spatial_pos",
-                "in_degree",
-                "out_degree",
-                "input_edges",
-            ]
-            cols = ["input_ids", "attention_mask", "pixel_values"] + graph_cols
-            dataset.set_format(type="torch", columns=cols)
-
             # Set a validation set aside
             dataset = dataset.train_test_split(
                 test_size=cfg.data.validation_split, seed=cfg.data.seed
@@ -329,6 +326,7 @@ def train_graph_image_model(cfg: DictConfig):
 
             config = GraphCLIPConfig(
                 graph_config=graphormer_config,
+                pretrained_graphormer_hub_id=cfg.model.pretrained_graphormer_hub_id,
                 graph_pair_type=cfg.model.model_type,
                 pretrained_model_name_or_path=cfg.model.pretrained_model_name_or_path,
                 alpha=cfg.model.alpha,
@@ -391,6 +389,11 @@ def train_graph_image_model(cfg: DictConfig):
                 cfg.training, "warmup_ratio_unfreeze", 0.5
             )
             warmup_steps = int(warmup_ratio_unfreeze * cfg.training.max_steps)
+            extra_cb = ExtraCallback(
+                enable_graph_probing=cfg.training.get(
+                    "enable_graph_probing", False
+                )
+            )
             gradual_cb = WarmupGradualUnfreezeCallback(
                 model=model,
                 cfg=cfg,
@@ -403,7 +406,7 @@ def train_graph_image_model(cfg: DictConfig):
                 train_dataset=train_dataset,
                 eval_dataset=validation_dataset,
                 callbacks=[
-                    ExtraCallback(),
+                    extra_cb,
                     gradual_cb,
                 ],
             )
