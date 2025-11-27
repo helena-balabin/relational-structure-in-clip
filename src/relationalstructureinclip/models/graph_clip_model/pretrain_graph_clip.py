@@ -326,7 +326,9 @@ def train_graph_image_model(cfg: DictConfig):
 
             config = GraphCLIPConfig(
                 graph_config=graphormer_config,
-                pretrained_graphormer_hub_id=cfg.model.pretrained_graphormer_hub_id,
+                pretrained_graphormer_hub_id=cfg.model.get(
+                    "pretrained_graphormer_hub_id", None
+                ),
                 graph_pair_type=cfg.model.model_type,
                 pretrained_model_name_or_path=cfg.model.pretrained_model_name_or_path,
                 alpha=cfg.model.alpha,
