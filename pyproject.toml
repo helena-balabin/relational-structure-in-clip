@@ -39,7 +39,9 @@ himalaya = "^0.4.8"
 open-clip-torch = "^2.24.0"
 peft = "^0.17.1"
 hydra-core = "^1.3.2"
-scipy = "^1.51.1"
+scipy = "^1.16.3"
+
+graphormer-pyg = { git = "https://github.com/helena-balabin/graphormer-pyg.git", branch = "main" }
 
 [tool.poetry.group.dev.dependencies]
 toml = "^0.10.2"
