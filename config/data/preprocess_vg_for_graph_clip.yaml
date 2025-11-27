@@ -38,9 +38,10 @@ model:
   graph_types:
     - "action_image_graphs"
     - "spatial_image_graphs"
+    - "image_graphs"
 
 # Training details needed for preprocess_item
 training:
-  edge_max_dist: 10
-  spatial_pos_max: 20
-  max_nodes: 40
+  max_path_distance: 10
+  max_in_degree: 10
+  max_out_degree: 10
