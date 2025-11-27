@@ -1,7 +1,7 @@
 output_dir: /data/huggingface/transformers
 
 data:
-  dataloader_num_workers: 32
+  dataloader_num_workers: 16
   local_dataset_identifier_processed: "/data/huggingface/datasets/vg-captions-graphs-processed/processed"
   seed: 42
   validation_split: 0.1
@@ -9,7 +9,6 @@ data:
 
 model:
   pretrained_model_name_or_path: "openai/clip-vit-base-patch32"
-  pretrained_graphormer_hub_id: "clefourrier/graphormer-base-pcqm4mv2"
   huggingface_hub_model_id: "helena-balabin/graph-clip"
   cache_dir: /data/huggingface/transformers/
   model_type: "image"
@@ -24,14 +23,14 @@ training:
   prefetch_factor: 2
   learning_rate: 3e-4
   max_steps: 2500 # 100 steps for debug
-  weight_decay: 0.0  # or 0.01
+  weight_decay: 0.01  # or 0.01
   logging_steps: 100 # 10 for debug
   eval_steps: 100  # 10 for debug
   save_steps: 500
   save_total_limit: 3
   warmup_ratio: 0.05 # optional: set to 0.05
   warmup_ratio_unfreeze: 0.5  # fraction of total steps for gradual unfreezing
-  precision: "fp32" # options: "bf16", "fp16", "fp32"
+  precision: "fp16" # options: "bf16", "fp16", "fp32"
   pin_memory: true
   persistent_workers: true
   dataloader_drop_last: true
