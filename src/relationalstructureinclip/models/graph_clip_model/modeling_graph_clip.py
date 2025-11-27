@@ -9,6 +9,7 @@ from transformers import (
     CLIPModel,
     CLIPTextModel,
     CLIPVisionModel,
+    GraphormerForGraphClassification,
     GraphormerModel,
 )
 from transformers.modeling_outputs import (
@@ -21,6 +22,36 @@ from transformers.models.clip.modeling_clip import clip_loss
 from relationalstructureinclip.models.graph_clip_model.configuration_graph_clip import (
     GraphCLIPConfig,
 )
+
+
+def check_embedding_collapse(embeds: torch.Tensor):
+    """
+    embeds: Tensor of shape [batch_size, embedding_dim]
+    """
+    # Normalize embeddings
+    embeds_norm = embeds / embeds.norm(dim=-1, keepdim=True)
+
+    # Compute pairwise cosine similarity
+    sim_matrix = embeds_norm @ embeds_norm.T
+    mask = ~torch.eye(sim_matrix.size(0), dtype=torch.bool, device=sim_matrix.device)
+    sim_vals = sim_matrix[mask]
+
+    mean_cos = sim_vals.mean().item()
+    std_cos = sim_vals.std().item()
+    print(f"Mean cosine similarity: {mean_cos:.4f}, std: {std_cos:.4f}")
+
+    # Per-dimension variance
+    dim_var = embeds_norm.var(dim=0)
+    print(f"Per-dim variance: min {dim_var.min():.4f}, max {dim_var.max():.4f}, mean {dim_var.mean():.4f}")
+
+    # Effective rank (entropy-based)
+    u, s, v = torch.svd(embeds_norm)
+    s = s / s.sum()
+    entropy = -(s * torch.log(s + 1e-12)).sum()
+    effective_rank = torch.exp(entropy)
+    print(f"Effective rank: {effective_rank:.2f}")
+
+    return mean_cos, std_cos, dim_var, effective_rank
 
 
 @dataclass
@@ -84,10 +115,10 @@ class GraphCLIPModel(CLIPModel):
 
         # Initialize Graphormer model - load pretrained if specified
         if config.pretrained_graphormer_hub_id:
-            self.graph_model = GraphormerModel.from_pretrained(
+            self.graph_model = GraphormerForGraphClassification.from_pretrained(
                 config.pretrained_graphormer_hub_id,
                 cache_dir=config.cache_dir,
-            )
+            ).encoder
         else:
             self.graph_model = GraphormerModel._from_config(graph_config)
 
@@ -157,21 +188,6 @@ class GraphCLIPModel(CLIPModel):
         )
         text_embeds = text_outputs[1]  # Pooled output
         text_embeds = self.text_projection(text_embeds)
-
-        # If explicit graph_input dict not provided, reconstruct from flattened keys
-        # (minimal adaptation for new preprocessing)
-        if graph_input is None:
-            flattened_keys = [
-                "input_nodes",
-                "attn_bias",
-                "attn_edge_type",
-                "spatial_pos",
-                "in_degree",
-                "out_degree",
-                "input_edges",
-            ]
-            if all(k in kwargs for k in flattened_keys):
-                graph_input = {k: kwargs.pop(k) for k in flattened_keys}
 
         graph_outputs = None
         graph_embeds = None
