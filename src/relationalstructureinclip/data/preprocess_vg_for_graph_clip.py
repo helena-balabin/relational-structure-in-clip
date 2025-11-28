@@ -1,79 +1,21 @@
 """Preprocess VG data for GraphCLIP training."""
 
 import logging
-import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import hydra
 import networkx as nx
-import torch
 from datasets import (
     Dataset,
     concatenate_datasets,
     load_dataset,
-    load_from_disk,
 )
 from nltk.corpus import wordnet as wn
 from omegaconf import DictConfig
-from torch_geometric.data import Data
-from torchvision.io import decode_image
-from tqdm import tqdm
-from transformers import CLIPProcessor
-
-from graphormer_pyg.functional import precalculate_custom_attributes, precalculate_paths  # type: ignore
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-
-def preprocess_batch_items(
-    items,
-    max_path_distance: int = 10,
-    max_in_degree: int = 10,
-    max_out_degree: int = 10,
-):
-    """Preprocess the input item for Graphormer.
-
-    :items: The batch of input items to preprocess.
-    :type items: List[dict]
-    :param max_path_distance: The maximum edge path depth (truncates dim=2 of input_edges).
-    :type max_path_distance: int
-    :param max_in_degree: Maximum in-degree for attention bias calculation.
-    :type max_in_degree: int
-    :param max_out_degree: Maximum out-degree for attention bias calculation.
-    :type max_out_degree: int
-    :param remove_extra_features: Whether to remove extra features from the item.
-    :type remove_extra_features: bool
-    :return: The preprocessed pyg Data objects.
-    :rtype: List[Data]
-    """
-    # Convert each item into a pyg Data object and calculate attributes
-    outputs = []
-
-    for item in tqdm(items, desc="Preprocessing graph items", total=len(items)):
-        edge_index = torch.tensor(item["edge_index"], dtype=torch.long)
-        data = Data(edge_index=edge_index)
-        # Assign a unique feature to each node (its index)
-        data.num_nodes = edge_index.max().item() + 1
-        # Assign the same feature to each edge (a dummy feature)
-        data.edge_attr = torch.zeros((data.num_edges, 1))
-        data.x = torch.arange(data.num_nodes, dtype=torch.long).unsqueeze(-1)
-        data = precalculate_custom_attributes(
-            data,
-            max_in_degree=max_in_degree,
-            max_out_degree=max_out_degree,
-        )
-        _, _, node_paths_length, edge_paths_tensor, edge_paths_length = precalculate_paths(
-            data,
-            max_path_distance=max_path_distance
-        )
-        data.node_paths_length = node_paths_length
-        data.edge_paths_tensor = edge_paths_tensor
-        data.edge_paths_length = edge_paths_length
-        outputs.append(data)
-
-    return outputs
 
 
 def flatten_captions(
@@ -367,100 +309,6 @@ def preprocess_vg_for_graphormer(cfg: DictConfig) -> None:
             seed=cfg.seed
         )
         vg_complete.save_to_disk(cfg.vg_processed_dir)
-
-    # Stage 2: Process the image/text and graph properties
-    processor = CLIPProcessor.from_pretrained(
-        cfg.model.pretrained_model_name_or_path,
-        cache_dir=cfg.model.cache_dir,
-        use_fast=True,
-    )
-    intermediate_dataset = load_from_disk(dataset_path=cfg.vg_processed_dir)
-
-    def preprocess_function(examples):
-        images = []
-        not_loaded_count = 0
-        for img_id in examples["image_id"]:
-            try:
-                image_path = os.path.join(cfg.image_base_path, f"{img_id}.jpg")
-                image = decode_image(image_path)
-                if image.shape[0] != 3:
-                    logging.warning(
-                        f"Image {img_id} has {image.shape[0]} channels, converting to 3-channel RGB."
-                    )
-                    image = image.repeat(3, 1, 1)
-                images.append(image)
-            except Exception:
-                logging.warning(
-                    f"Image {img_id} could not be loaded, using blank image instead."
-                )
-                images.append(torch.zeros((3, 256, 256), dtype=torch.uint8))
-                not_loaded_count += 1
-        if not_loaded_count > 0:
-            logging.info(f"{not_loaded_count} images could not be loaded.")
-
-        text = [t if t else "" for t in examples["sentences_raw"]]
-        processed = processor(
-            text=text,
-            images=images,
-            return_tensors="pt",
-            padding="max_length",
-            truncation=True,
-        )
-
-        return processed
-
-    for graph_type in cfg.model.graph_types:
-        if graph_type not in intermediate_dataset.column_names:
-            continue
-        dset = intermediate_dataset.rename_column(graph_type, "graph_input")
-        # Filter out graphs with no edges
-        dset = dset.filter(
-            lambda x: len(x["graph_input"]["edge_index"][0]) > 0
-            and any(
-                src != dst
-                for src, dst in zip(
-                    x["graph_input"]["edge_index"][0],
-                    x["graph_input"]["edge_index"][1],
-                )
-            ),
-            num_proc=cfg.num_proc,
-        )
-        final_dataset_text_image = dset.map(
-            preprocess_function,
-            batched=True,
-            batch_size=cfg.preprocessing_batch_size,
-            num_proc=cfg.num_proc,
-            remove_columns=dset.column_names,
-            load_from_cache_file=not cfg.overwrite_cache,
-        )
-        # Preprocess the list of graph dictionaries
-        processed_graph_input = preprocess_batch_items(
-            dset["graph_input"],
-            max_path_distance=cfg.training.max_path_distance,
-            max_in_degree=cfg.training.max_in_degree,
-            max_out_degree=cfg.training.max_out_degree,
-        )
-
-        save_path = os.path.join(
-            cfg.preprocessed_output_path,
-            f"processed-{graph_type.replace('_', '-')}",
-        )
-        # Save huggingface dataset
-        final_dataset_text_image.save_to_disk(
-            save_path, num_proc=cfg.num_proc, max_shard_size=cfg.max_shard_size
-        )
-        # Save graph data as torch
-        torch.save(
-            processed_graph_input,
-            os.path.join(
-                save_path, f"graph_data_{graph_type.replace('_', '-')}.pt"
-            ),
-        )
-
-        if cfg.push_to_hub:
-            hub_id = f"{cfg.hf_dataset_identifier_processed}-{graph_type.replace('_', '-')}"
-            final_dataset_text_image.push_to_hub(hub_id)
-            processed_graph_input.push_to_hub(hub_id)
 
 
 if __name__ == "__main__":

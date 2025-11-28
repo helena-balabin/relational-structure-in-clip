@@ -14,34 +14,3 @@ cache_dir: "/scratch/hbalabin/huggingface/datasets"
 vg_image_id_col: "image_id"
 include_image_graphs: True
 flatten_captions: True
-
-# --- Stage 2: Final, Heavy Preprocessing ---
-# This stage loads images and runs the CLIP processor, creating the final training-ready dataset.
-# Set 'load_stage_one_from_hub' to a Hugging Face dataset ID to skip Stage 1
-# and download the intermediate data directly. Set to null to run Stage 1 locally.
-load_stage_one_from_hub: "helena-balabin/vg-captions-graphs"
-# Base path where the VG images are stored
-image_base_path: "/data/huggingface/vg/VG_100K"
-# Path to save the final, fully preprocessed dataset. !!! Use scratch for that !!!
-# Could be around 700 GB for the three graph types.
-preprocessed_output_path: "/scratch/hbalabin/huggingface/datasets/vg-captions-graphs-processed"
-preprocessing_batch_size: 64
-overwrite_cache: true
-max_shard_size: "8GB"
-push_to_hub: false
-hf_dataset_identifier_processed: "helena-balabin/vg-captions-graphs-processed"
-
-# Model details needed for the CLIPProcessor
-model:
-  pretrained_model_name_or_path: "openai/clip-vit-base-patch32"
-  cache_dir: "/scratch/hbalabin/huggingface/transformers/"
-  graph_types:
-    - "action_image_graphs"
-    - "spatial_image_graphs"
-    - "image_graphs"
-
-# Training details needed for preprocess_item
-training:
-  max_path_distance: 10
-  max_in_degree: 10
-  max_out_degree: 10
