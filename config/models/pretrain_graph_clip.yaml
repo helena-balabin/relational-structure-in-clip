@@ -1,13 +1,11 @@
 output_dir: /data/huggingface/transformers
 
 data:
-  dataloader_num_workers: 8
-  cache_dir: /data/huggingface/datasets/
-  hf_dataset_identifier: helena-balabin/vg-captions-graphs
+  dataloader_num_workers: 16
+  local_dataset_identifier_processed: "/data/huggingface/datasets/vg-captions-graphs-processed/processed"
   seed: 42
   validation_split: 0.1
   remove_columns: ["coco_id", "flickr_id"]
-  image_base_path: /data/huggingface/vg/VG_100K
 
 model:
   pretrained_model_name_or_path: "openai/clip-vit-base-patch32"
@@ -15,17 +13,14 @@ model:
   cache_dir: /data/huggingface/transformers/
   model_type: "image"
   graph_types: ["image", "spatial_image", "action_image"] # List of graph types to train models for
-  graphormer_size: "small"
+  graphormer_size: "base"
+  dropout: 0.1
   alpha: 0.5  # Set to 1.0 to only look at graph-image contrastive loss
-  max_in_degree: 5
-  max_out_degree: 5
-  max_path_distance: 5
-  max_edges: 10
 
 training:
   batch_size: 256 # 32 for debug, also 256 * 4 GPUs is effective batch size of 1024
   gradient_accumulation_steps: 1
-  prefetch_factor: 8
+  prefetch_factor: 2
   learning_rate: 3e-4
   max_steps: 2500 # 100 steps for debug
   weight_decay: 0.01  # or 0.01
@@ -35,13 +30,12 @@ training:
   save_total_limit: 3
   warmup_ratio: 0.05 # optional: set to 0.05
   warmup_ratio_unfreeze: 0.5  # fraction of total steps for gradual unfreezing
-  precision: "fp32" # options: "bf16", "fp16", "fp32"
+  precision: "fp16" # options: "bf16", "fp16", "fp32"
   pin_memory: true
   persistent_workers: true
   dataloader_drop_last: true
   lr_scheduler_type: "linear"  # options: "linear", "constant", "cosine", etc.
   enable_graph_probing: false
-  max_grad_norm: 5.0
 
 mlflow:
   tracking_uri: /data/mlflow/

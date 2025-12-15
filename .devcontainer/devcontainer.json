@@ -1,0 +1,33 @@
+{
+    "name": "Python 3.12 DevContainer",
+    "image": "mcr.microsoft.com/devcontainers/python:1-3.12-bullseye",
+    "features": {
+        // Common system utilities (sudo, ca-certificates, curl, git)
+        "ghcr.io/devcontainers/features/common-utils:2": {},
+        // Bash command support
+        "ghcr.io/devcontainers-extra/features/bash-command:1": {},
+        // Install Ruff globally
+        "ghcr.io/devcontainers-extra/features/ruff:1": {},
+        // Add NVIDIA CUDA support
+        "ghcr.io/devcontainers/features/nvidia-cuda:1": {
+            "installCudnn": true
+        },
+        // Add Poetry support
+        "ghcr.io/devcontainers-extra/features/poetry:2": {}
+    },
+    "containerEnv": {
+        "WANDB_BASE_URL": "http://192.168.1.92:8080"
+    },
+    "mounts": [
+        "source=/data/u0150403/,target=/data/,type=bind"
+    ],
+    "runArgs": [
+        "--network=wandb_dev_network",
+        "--gpus=all"
+    ],
+    "hostRequirements": {
+        "gpu": "optional"
+    },
+    "workspaceFolder": "/workspaces/relational-structure-in-clip",
+    "remoteUser": "vscode"
+}

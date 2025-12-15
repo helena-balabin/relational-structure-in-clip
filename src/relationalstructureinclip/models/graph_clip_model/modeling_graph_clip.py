@@ -5,12 +5,12 @@ from typing import Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
-from graphormer_pyg.model import Graphormer  # type: ignore
-from torch_geometric.nn import Set2Set
 from transformers import (
     CLIPModel,
     CLIPTextModel,
-    CLIPVisionModel
+    CLIPVisionModel,
+    GraphormerForGraphClassification,
+    GraphormerModel,
 )
 from transformers.modeling_outputs import (
     BaseModelOutputWithNoAttention,
@@ -22,6 +22,36 @@ from transformers.models.clip.modeling_clip import clip_loss
 from relationalstructureinclip.models.graph_clip_model.configuration_graph_clip import (
     GraphCLIPConfig,
 )
+
+
+def check_embedding_collapse(embeds: torch.Tensor):
+    """
+    embeds: Tensor of shape [batch_size, embedding_dim]
+    """
+    # Normalize embeddings
+    embeds_norm = embeds / embeds.norm(dim=-1, keepdim=True)
+
+    # Compute pairwise cosine similarity
+    sim_matrix = embeds_norm @ embeds_norm.T
+    mask = ~torch.eye(sim_matrix.size(0), dtype=torch.bool, device=sim_matrix.device)
+    sim_vals = sim_matrix[mask]
+
+    mean_cos = sim_vals.mean().item()
+    std_cos = sim_vals.std().item()
+    print(f"Mean cosine similarity: {mean_cos:.4f}, std: {std_cos:.4f}")
+
+    # Per-dimension variance
+    dim_var = embeds_norm.var(dim=0)
+    print(f"Per-dim variance: min {dim_var.min():.4f}, max {dim_var.max():.4f}, mean {dim_var.mean():.4f}")
+
+    # Effective rank (entropy-based)
+    u, s, v = torch.svd(embeds_norm)
+    s = s / s.sum()
+    entropy = -(s * torch.log(s + 1e-12)).sum()
+    effective_rank = torch.exp(entropy)
+    print(f"Effective rank: {effective_rank:.2f}")
+
+    return mean_cos, std_cos, dim_var, effective_rank
 
 
 @dataclass
@@ -68,6 +98,7 @@ class GraphCLIPModel(CLIPModel):
         """
         # Specify configs
         super().__init__(config)
+        graph_config = config.graph_config
         self.alpha = getattr(config, "alpha", 0.5)
 
         # If "pretrained_model_name_or_path" is in config, load the pretrained vision and text models
@@ -82,13 +113,18 @@ class GraphCLIPModel(CLIPModel):
                 cache_dir=config.cache_dir,
             )
 
-        # Initialize Graphormer model
-        output_dim = config.graph_config.get("output_dim", 512)
-        self.graph_model = Graphormer(**config.graph_config)
+        # Initialize Graphormer model - load pretrained if specified
+        if config.pretrained_graphormer_hub_id:
+            self.graph_model = GraphormerForGraphClassification.from_pretrained(
+                config.pretrained_graphormer_hub_id,
+                cache_dir=config.cache_dir,
+            ).encoder
+        else:
+            self.graph_model = GraphormerModel._from_config(graph_config)
 
         # Projection layer for graph embeddings
         self.graph_projection = nn.Linear(
-            output_dim, config.projection_dim, bias=False
+            graph_config.hidden_size, config.projection_dim, bias=False
         )
 
         # Determine the graph pair type (either "text" or "image")
@@ -132,9 +168,6 @@ class GraphCLIPModel(CLIPModel):
             if return_dict is not None
             else self.config.use_return_dict
         )
-        # Move graph input to the same device as the model
-        if graph_input is not None:
-            graph_input = graph_input.to(self.device)
 
         # Process images through the CLIP vision encoder
         vision_outputs = self.vision_model(
@@ -159,12 +192,10 @@ class GraphCLIPModel(CLIPModel):
         graph_outputs = None
         graph_embeds = None
         if graph_input is not None:
-            # First get node-level representations for each input graph in the batch
-            graph_outputs = self.graph_model(graph_input)
-            # Then use the VNode from each graph to get graph-level representations
-            graph_outputs_pooled = self.graph_model.get_graph_repr(graph_outputs, graph_input.ptr)
-            # Project to the shared CLIP embedding space
-            graph_embeds = self.graph_projection(graph_outputs_pooled)
+            graph_outputs = self.graph_model(**graph_input)
+            # Use the special graph token for graph representation
+            graph_embeds = graph_outputs.last_hidden_state[:, 0, :]
+            graph_embeds = self.graph_projection(graph_embeds)
 
         # Normalize the projected features
         image_embeds = image_embeds / image_embeds.norm(
