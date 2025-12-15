@@ -5,11 +5,9 @@ import os
 
 import hydra
 import mlflow
-import numpy as np
 import torch
 from datasets import load_from_disk
 from omegaconf import DictConfig
-from sklearn.model_selection import train_test_split
 from transformers import (
     GraphormerConfig,
     Trainer,
@@ -22,10 +20,6 @@ from relationalstructureinclip.models.graph_clip_model.configuration_graph_clip 
 )
 from relationalstructureinclip.models.graph_clip_model.modeling_graph_clip import (
     GraphCLIPModel,
-)
-from relationalstructureinclip.models.probing.probe_clip_graph_properties import (
-    ProbeTrainer,
-    ProbingTask,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -129,18 +123,6 @@ class ExtraTrainer(Trainer):
             for key in ("loss_graph_pair", "loss_image_text")
             if getattr(outputs, key, None) is not None
         }
-        # Also store (pooled) graph embeddings and graph properties in TrainerState
-        # Cache during evaluation only
-        if not model.training and self.enable_graph_probing:
-            if not hasattr(self.state, "last_embeddings"):
-                self.state.last_embeddings = []
-            if not hasattr(self.state, "last_num_nodes"):
-                self.state.last_num_nodes = []
-            # Store (pooled) graph embeddings
-            self.state.last_embeddings.append(outputs.graph_embeds)
-            # Store num_nodes as tensor
-            num_nodes = (inputs["input_nodes"] != 0).any(dim=-1).sum(dim=-1)
-            self.state.last_num_nodes.append(num_nodes)
 
         return (loss, outputs) if return_outputs else loss
 
@@ -176,72 +158,6 @@ class ExtraCallback(TrainerCallback):
             metric_name = f"{prefix}_{key}"
             logs[metric_name] = val
             mlflow.log_metric(metric_name, val, step=state.global_step)
-
-    def on_evaluate(self, args, state, control, **kwargs):
-        """Perform probing task evaluation on cached embeddings and log results to MLflow."""
-        if not self.enable_graph_probing:
-            return super().on_evaluate(args, state, control, **kwargs)
-
-        if not state.last_embeddings or len(state.last_embeddings) == 0:
-            logger.info(
-                "No embeddings cached for evaluation; skipping probing task."
-            )
-            return super().on_evaluate(args, state, control, **kwargs)
-
-        # Stack tensors and convert to numpy
-        embeddings = (
-            torch.cat(state.last_embeddings, dim=0).detach().cpu().numpy()
-        )
-        num_nodes = (
-            torch.cat(state.last_num_nodes, dim=0).detach().cpu().numpy()
-        )
-        # Train/test split for probing task
-        emb_train, emb_test, nodes_train, nodes_test = train_test_split(
-            embeddings,
-            num_nodes,
-            test_size=0.3,
-            random_state=42,
-        )
-        for split_name, split_values in (
-            ("train", nodes_train),
-            ("test", nodes_test),
-        ):
-            if split_values.size and np.all(split_values == split_values[0]):
-                logger.warning(
-                    "No variance in %s num_nodes split; constant value %s",
-                    split_name,
-                    split_values[0],
-                )
-        nodes_train, nodes_test = nodes_train[:, None], nodes_test[:, None]
-        # Create a probing task and trainer to evaluate the embeddings
-        probing_task = ProbingTask(
-            target="num_nodes",
-            task_type="regression",
-        )
-        probe_trainer = ProbeTrainer(
-            cv_folds=3,
-            alpha_range_and_samples=(-2, 2, 5),
-        )
-        probe_result = probing_task.train_probe(
-            probe_trainer,
-            emb_train,
-            nodes_train,
-            emb_test,
-            nodes_test,
-        )
-        # Log probing results to MLflow
-        for metric_name, metric_value in probe_result.items():
-            mlflow.log_metric(
-                f"eval_probe_num_nodes_{metric_name}",
-                metric_value,
-                step=state.global_step,
-            )
-
-        # Clear the cache for next evaluation
-        state.last_embeddings = []
-        state.last_num_nodes = []
-
-        return super().on_evaluate(args, state, control, **kwargs)
 
 
 @hydra.main(
