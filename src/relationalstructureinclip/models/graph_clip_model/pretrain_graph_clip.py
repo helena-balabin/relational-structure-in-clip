@@ -2,16 +2,18 @@
 
 import logging
 import os
+from typing import Dict, List
 
 import hydra
 import mlflow
-import numpy as np
 import torch
-from datasets import load_from_disk
+from datasets import load_dataset
+from graphormer_pyg.functional import precalculate_custom_attributes, precalculate_paths  # type: ignore
 from omegaconf import DictConfig
-from sklearn.model_selection import train_test_split
+from torchvision.io import decode_image
+from torch_geometric.data import Batch, Data
 from transformers import (
-    GraphormerConfig,
+    CLIPProcessor,
     Trainer,
     TrainerCallback,
     TrainingArguments,
@@ -23,13 +25,128 @@ from relationalstructureinclip.models.graph_clip_model.configuration_graph_clip 
 from relationalstructureinclip.models.graph_clip_model.modeling_graph_clip import (
     GraphCLIPModel,
 )
-from relationalstructureinclip.models.probing.probe_clip_graph_properties import (
-    ProbeTrainer,
-    ProbingTask,
-)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+def compute_structural_features(data: Data) -> torch.Tensor:
+    """Optimized structural node features computation."""
+    num_nodes = data.num_nodes
+    edge_index = data.edge_index
+    
+    # Remove self-loops once
+    mask = edge_index[0] != edge_index[1]
+    edge_index_no_self = edge_index[:, mask]
+    
+    # Vectorized degree computation
+    degree = torch.bincount(edge_index_no_self[0], minlength=num_nodes).float()
+    
+    # Avoid division by zero
+    max_degree = degree.max() if degree.numel() > 0 and degree.max() > 0 else 1.0
+    norm_degree = degree / max_degree
+    
+    # Boolean features (all vectorized)
+    is_endpoint = (degree == 1).float()
+    is_isolated = (degree == 0).float()
+    
+    # Use torch operations for statistics
+    mean_degree = degree.mean()
+    std_degree = degree.std() if degree.numel() > 1 else torch.tensor(1.0)
+    is_hub = (degree > mean_degree + std_degree).float()
+    
+    # Neighbor degree sum (vectorized)
+    neighbor_degree_sum = torch.zeros(num_nodes, dtype=torch.float, device=degree.device)
+    if edge_index_no_self.numel() > 0:
+        neighbor_degree_sum.scatter_add_(0, edge_index_no_self[0], degree[edge_index_no_self[1]])
+    
+    max_neighbor_sum = neighbor_degree_sum.max() if neighbor_degree_sum.max() > 0 else 1.0
+    norm_neighbor_degree = neighbor_degree_sum / max_neighbor_sum
+    
+    # Degree rank
+    degree_rank = torch.argsort(torch.argsort(degree, descending=True)).float()
+    norm_rank = degree_rank / max(num_nodes - 1, 1)
+    
+    # Stack all features
+    features = torch.stack([
+        degree, norm_degree, is_endpoint, is_isolated,
+        is_hub, neighbor_degree_sum, norm_neighbor_degree, norm_rank,
+    ], dim=-1)
+    
+    return features
+
+
+class GraphCLIPCollator:
+    """Custom collate function for GraphCLIP."""
+    
+    def __init__(
+        self,
+        image_base_path=None,
+        processor_base="openai/clip-vit-base-patch32",
+        max_in_degree=10,
+        max_out_degree=10,
+        max_path_distance=10,
+    ):
+        self.image_base_path = image_base_path
+        self.processor = CLIPProcessor.from_pretrained(processor_base)
+        self.max_in_degree = max_in_degree
+        self.max_out_degree = max_out_degree
+        self.max_path_distance = max_path_distance
+
+    def _load_image(self, img_id):
+        """Load a single image."""
+        try:
+            image_path = os.path.join(self.image_base_path, f"{img_id}.jpg")
+            image = decode_image(image_path)
+            if image.shape[0] != 3:
+                image = image.repeat(3, 1, 1)
+        except Exception:
+            logging.warning(f"Image {img_id} not found, using blank.")
+            image = torch.zeros((3, 256, 256), dtype=torch.uint8)
+        return image
+
+    def _preprocess_graph(self, graph_dict):
+        """Preprocess a single graph."""
+        edge_index = torch.tensor(graph_dict["edge_index"], dtype=torch.long)
+        data = Data(edge_index=edge_index)
+        data.num_nodes = edge_index.max().item() + 1
+        data.edge_attr = torch.zeros((data.num_edges, 1), dtype=torch.long)
+        data.x = compute_structural_features(data)
+        data = precalculate_custom_attributes(
+            data,
+            max_in_degree=self.max_in_degree,
+            max_out_degree=self.max_out_degree,
+        )
+        return data
+
+    def __call__(self, batch: List[Dict]):
+        """Collate function."""
+        # Process text and images
+        texts = [x.get("sentences_raw", "") or "" for x in batch]
+        images = [self._load_image(x["image_id"]) for x in batch]
+        
+        clip_collated = self.processor(
+            text=texts,
+            images=images,
+            return_tensors="pt",
+            padding="max_length",
+            truncation=True,
+        )
+
+        # Process graphs
+        graph_list = [self._preprocess_graph(x["graph_input"]) for x in batch]
+        pyg_batch = Batch.from_data_list(graph_list)
+        
+        _, _, node_paths_length, edge_paths_tensor, edge_paths_length = precalculate_paths(
+            pyg_batch,
+            max_path_distance=self.max_path_distance,
+        )
+        pyg_batch.node_paths_length = node_paths_length
+        pyg_batch.edge_paths_tensor = edge_paths_tensor
+        pyg_batch.edge_paths_length = edge_paths_length
+
+        clip_collated["graph_input"] = pyg_batch
+        return clip_collated
 
 
 class WarmupGradualUnfreezeCallback(TrainerCallback):
@@ -108,53 +225,25 @@ class WarmupGradualUnfreezeCallback(TrainerCallback):
 
 
 class ExtraTrainer(Trainer):
-    """
-    Trainer that logs extra model outputs (like extra losses) in sync with normal logging.
-    """
-
-    def __init__(self, enable_graph_probing=True, *args, **kwargs):
-        """Initialize ExtraTrainer."""
-        self.enable_graph_probing = enable_graph_probing
-        super().__init__(*args, **kwargs)
+    """Trainer that logs extra model outputs."""
 
     def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
-        """Compute loss and store extra outputs in TrainerState for callback access."""
-        # Forward pass
+        """Compute loss and store extra outputs for logging."""
         outputs = model(**inputs)
         loss = outputs["loss"]
 
-        # Store outputs in TrainerState for callback to access
+        # Store outputs for callback
         self.state.last_logged_losses = {
             key: getattr(outputs, key).detach()
             for key in ("loss_graph_pair", "loss_image_text")
             if getattr(outputs, key, None) is not None
         }
-        # Also store (pooled) graph embeddings and graph properties in TrainerState
-        # Cache during evaluation only
-        if not model.training and self.enable_graph_probing:
-            if not hasattr(self.state, "last_embeddings"):
-                self.state.last_embeddings = []
-            if not hasattr(self.state, "last_num_nodes"):
-                self.state.last_num_nodes = []
-            # Store (pooled) graph embeddings
-            self.state.last_embeddings.append(outputs.graph_embeds)
-            # Store num_nodes as tensor
-            num_nodes = (inputs["input_nodes"] != 0).any(dim=-1).sum(dim=-1)
-            self.state.last_num_nodes.append(num_nodes)
 
         return (loss, outputs) if return_outputs else loss
 
 
 class ExtraCallback(TrainerCallback):
-    """Logs extra losses to MLflow at the same frequency as normal Trainer logs, separated for train/eval."""
-
-    def __init__(self, enable_graph_probing=True):
-        """Initialize the callback.
-
-        Args:
-            enable_graph_probing (bool): Whether to enable graph probing during evaluation.
-        """
-        self.enable_graph_probing = enable_graph_probing
+    """Logs extra losses to MLflow."""
 
     def on_log(self, args, state, control, logs=None, **kwargs):
         """Log extra losses to MLflow."""
@@ -164,84 +253,14 @@ class ExtraCallback(TrainerCallback):
         outputs = getattr(state, "last_logged_losses", None)
         if not outputs:
             return
-        # Determine phase by checking if any eval key exists
-        prefix = (
-            "eval"
-            if any(k.startswith("eval_") for k in logs.keys())
-            else "train"
-        )
+            
+        prefix = "eval" if any(k.startswith("eval_") for k in logs.keys()) else "train"
 
         for key, val_tensor in outputs.items():
             val = val_tensor.detach().cpu().mean().item()
             metric_name = f"{prefix}_{key}"
             logs[metric_name] = val
             mlflow.log_metric(metric_name, val, step=state.global_step)
-
-    def on_evaluate(self, args, state, control, **kwargs):
-        """Perform probing task evaluation on cached embeddings and log results to MLflow."""
-        if not self.enable_graph_probing:
-            return super().on_evaluate(args, state, control, **kwargs)
-
-        if not state.last_embeddings or len(state.last_embeddings) == 0:
-            logger.info(
-                "No embeddings cached for evaluation; skipping probing task."
-            )
-            return super().on_evaluate(args, state, control, **kwargs)
-
-        # Stack tensors and convert to numpy
-        embeddings = (
-            torch.cat(state.last_embeddings, dim=0).detach().cpu().numpy()
-        )
-        num_nodes = (
-            torch.cat(state.last_num_nodes, dim=0).detach().cpu().numpy()
-        )
-        # Train/test split for probing task
-        emb_train, emb_test, nodes_train, nodes_test = train_test_split(
-            embeddings,
-            num_nodes,
-            test_size=0.3,
-            random_state=42,
-        )
-        for split_name, split_values in (
-            ("train", nodes_train),
-            ("test", nodes_test),
-        ):
-            if split_values.size and np.all(split_values == split_values[0]):
-                logger.warning(
-                    "No variance in %s num_nodes split; constant value %s",
-                    split_name,
-                    split_values[0],
-                )
-        nodes_train, nodes_test = nodes_train[:, None], nodes_test[:, None]
-        # Create a probing task and trainer to evaluate the embeddings
-        probing_task = ProbingTask(
-            target="num_nodes",
-            task_type="regression",
-        )
-        probe_trainer = ProbeTrainer(
-            cv_folds=3,
-            alpha_range_and_samples=(-2, 2, 5),
-        )
-        probe_result = probing_task.train_probe(
-            probe_trainer,
-            emb_train,
-            nodes_train,
-            emb_test,
-            nodes_test,
-        )
-        # Log probing results to MLflow
-        for metric_name, metric_value in probe_result.items():
-            mlflow.log_metric(
-                f"eval_probe_num_nodes_{metric_name}",
-                metric_value,
-                step=state.global_step,
-            )
-
-        # Clear the cache for next evaluation
-        state.last_embeddings = []
-        state.last_num_nodes = []
-
-        return super().on_evaluate(args, state, control, **kwargs)
 
 
 @hydra.main(
@@ -283,12 +302,41 @@ def train_graph_image_model(cfg: DictConfig):
             mlflow.log_params(cfg_without_output_dir)
             mlflow.log_param("current_graph_type", graph_type)
 
-            # Load preprocessed data
-            dataset = load_from_disk(
-                cfg.data.local_dataset_identifier_processed
-                + "-"
-                + target_graph_column.replace("_", "-")
+            # Load data
+            dataset = load_dataset(
+                cfg.data.hf_dataset_identifier,
+                cache_dir=cfg.data.get("cache_dir", None),
+            )["train"]
+            # Rename the target graph column into "graph_input" for consistency, remove the other two graph columns
+            dataset = dataset.rename_column(
+                target_graph_column, "graph_input"
             )
+            # Filter out graphs with no edges and graphs that are too large
+            max_edges = cfg.model.get("max_edges", 100)
+            dataset = dataset.filter(
+                lambda x: (
+                    len(x["graph_input"]["edge_index"][0]) > 0 
+                    and len(x["graph_input"]["edge_index"][0]) <= max_edges
+                    and any(
+                        src != dst for src, dst in zip(
+                            x["graph_input"]["edge_index"][0], 
+                            x["graph_input"]["edge_index"][1],
+                        )
+                    )
+                ),
+                num_proc=cfg.data.dataloader_num_workers,
+            )
+            logger.info(
+                f"Filtered to graphs with 1-{max_edges} edges (excluding self-loops). "
+                f"Remaining samples: {len(dataset)}"
+            )
+            # Remove the other two graph columns
+            other_graph_columns = [
+                col for col in ["image_graphs", "spatial_image_graphs", "action_image_graphs"]
+                if col != target_graph_column and col in dataset.column_names
+            ]
+            if other_graph_columns:
+                dataset = dataset.remove_columns(other_graph_columns)
             # Remove the columns from cfg.data.remove_columns if they exist
             if hasattr(cfg.data, "remove_columns"):
                 cols_to_remove = [
@@ -312,23 +360,36 @@ def train_graph_image_model(cfg: DictConfig):
 
             # Create a configuration for the GraphCLIP Model
             if cfg.model.graphormer_size == "small":
-                graphormer_config = GraphormerConfig(
-                    hidden_size=512,
-                    embedding_dim=512,
-                    ffn_embedding_dim=512,
-                    num_hidden_layers=6,
-                    dropout=cfg.model.dropout,
-                )
+                graphormer_config = {
+                    "num_layers": 6,
+                    "input_node_dim": 8,
+                    "node_dim": 64,
+                    "input_edge_dim": 1,
+                    "edge_dim": 64,
+                    "output_dim": 512,
+                    "n_heads": 8,
+                    "ff_dim": 64,
+                    "max_in_degree": cfg.model.get("max_in_degree", 10),
+                    "max_out_degree": cfg.model.get("max_out_degree", 10),
+                    "max_path_distance": cfg.model.get("max_path_distance", 10),                    
+                }
             else:
-                graphormer_config = GraphormerConfig(
-                    dropout=cfg.model.dropout,
-                )
+                graphormer_config = {
+                    "num_layers": 6,
+                    "input_node_dim": 1,
+                    "node_dim": 512,
+                    "input_edge_dim": 1,
+                    "edge_dim": 512,
+                    "output_dim": 512,
+                    "n_heads": 32,
+                    "ff_dim": 512,
+                    "max_in_degree": cfg.model.get("max_in_degree", 10),
+                    "max_out_degree": cfg.model.get("max_out_degree", 10),
+                    "max_path_distance": cfg.model.get("max_path_distance", 10),
+                }
 
             config = GraphCLIPConfig(
                 graph_config=graphormer_config,
-                pretrained_graphormer_hub_id=cfg.model.get(
-                    "pretrained_graphormer_hub_id", None
-                ),
                 graph_pair_type=cfg.model.model_type,
                 pretrained_model_name_or_path=cfg.model.pretrained_model_name_or_path,
                 alpha=cfg.model.alpha,
@@ -350,7 +411,7 @@ def train_graph_image_model(cfg: DictConfig):
 
             training_args = TrainingArguments(
                 output_dir=os.path.join(
-                    cfg.output_dir, f"graph-clip-{graph_type}"
+                    cfg.output_dir, f"graph-clip-{graph_type.replace('_', '-')}"
                 ),
                 eval_strategy="steps",
                 eval_steps=cfg.training.eval_steps,
@@ -367,6 +428,7 @@ def train_graph_image_model(cfg: DictConfig):
                 dataloader_persistent_workers=cfg.training.persistent_workers,
                 dataloader_pin_memory=cfg.training.pin_memory,
                 dataloader_drop_last=cfg.training.dataloader_drop_last,
+                optim="adamw_torch_fused",
                 weight_decay=cfg.training.weight_decay,
                 logging_dir=os.path.join(
                     cfg.output_dir,
@@ -381,7 +443,7 @@ def train_graph_image_model(cfg: DictConfig):
                 metric_for_best_model="eval_loss",
                 lr_scheduler_type=cfg.training.lr_scheduler_type,
                 warmup_ratio=warmup_ratio,
-                max_grad_norm=1.0,
+                max_grad_norm=cfg.training.get("max_grad_norm", 1.0),  # Allow larger gradients early on
                 bf16=use_bf16,
                 fp16=use_fp16,
                 remove_unused_columns=False,
@@ -391,11 +453,7 @@ def train_graph_image_model(cfg: DictConfig):
                 cfg.training, "warmup_ratio_unfreeze", 0.5
             )
             warmup_steps = int(warmup_ratio_unfreeze * cfg.training.max_steps)
-            extra_cb = ExtraCallback(
-                enable_graph_probing=cfg.training.get(
-                    "enable_graph_probing", False
-                )
-            )
+            extra_cb = ExtraCallback()
             gradual_cb = WarmupGradualUnfreezeCallback(
                 model=model,
                 cfg=cfg,
@@ -403,18 +461,23 @@ def train_graph_image_model(cfg: DictConfig):
             )
 
             trainer = ExtraTrainer(
-                enable_graph_probing=cfg.training.get(
-                    "enable_graph_probing", False
-                ),
                 model=model,
                 args=training_args,
                 train_dataset=train_dataset,
                 eval_dataset=validation_dataset,
+                data_collator=GraphCLIPCollator(
+                    processor_base=cfg.model.pretrained_model_name_or_path,
+                    image_base_path=cfg.data.get("image_base_path", None),
+                    max_in_degree=cfg.model.get("max_in_degree", 10),
+                    max_out_degree=cfg.model.get("max_out_degree", 10),
+                    max_path_distance=cfg.model.get("max_path_distance", 10),
+                ),
                 callbacks=[
                     extra_cb,
                     gradual_cb,
                 ],
             )
+
             # Train the model
             trainer.train()
 

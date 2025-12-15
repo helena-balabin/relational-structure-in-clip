@@ -1,0 +1,55 @@
+# Graphormer SSL Pretraining Configuration
+# Train a Graphormer encoder with self-supervised learning
+
+output_dir: /data/huggingface/transformers
+
+data:
+  dataloader_num_workers: 8
+  cache_dir: /data/huggingface/datasets/
+  hf_dataset_identifier: helena-balabin/vg-captions-graphs
+  seed: 42
+  validation_split: 0.1
+  percentage: 10  # Percentage of the training data to use (1-100)
+  remove_columns: ["coco_id", "flickr_id"]
+
+model:
+  cache_dir: /data/huggingface/transformers/
+  graph_types: ["image", "spatial_image", "action_image"] # List of graph types to train
+  graphormer_size: "small"
+  max_in_degree: 5
+  max_out_degree: 5
+  max_path_distance: 5
+
+# SSL Pretraining settings
+ssl:
+  enabled: true  # Set to true to run SSL pretraining before main training
+  num_epochs: 50  # Number of SSL pretraining epochs
+  batch_size: 32  # Batch size for SSL (reduce if OOM occurs)
+  gradient_accumulation_steps: 2  # Accumulate gradients over N steps (effective_batch_size = batch_size * N)
+  use_amp: true  # Use automatic mixed precision training (reduces memory by ~40%)
+  learning_rate: 1e-3  # Learning rate for SSL
+  save_checkpoint: true  # Save pretrained encoder
+  checkpoint_path: "/data/huggingface/transformers/ssl_pretrained_graph_encoder.pt"
+  
+  # Augmentation settings
+  augmentation:
+    edge_drop_prob: 0.2  # Probability of dropping edges
+    feature_mask_prob: 0.1  # Probability of masking features
+    node_drop_prob: 0.0  # Probability of dropping nodes (keep 0 for scene graphs)
+  
+  # Loss settings
+  loss:
+    temperature: 0.1  # Temperature for contrastive loss
+    contrastive_weight: 0.7  # Weight for contrastive component
+    property_weight: 0.3  # Weight for property prediction component
+    
+  # Which properties to predict
+  properties:
+    - num_nodes
+    - num_edges
+    - density
+    - avg_degree
+
+mlflow:
+  tracking_uri: /data/mlflow/
+  experiment_name: "Graphormer SSL Pretraining"

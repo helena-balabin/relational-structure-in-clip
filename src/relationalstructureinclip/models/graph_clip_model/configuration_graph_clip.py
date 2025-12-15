@@ -1,11 +1,8 @@
 """Configuration class for the custom Graph-based CLIP model incorporating Image, Text, and Graph inputs."""
 
-from typing import Optional, Union
+from typing import Dict, Optional
 
 from transformers import CLIPConfig
-from transformers.models.deprecated.graphormer.configuration_graphormer import (
-    GraphormerConfig,
-)
 
 
 class GraphCLIPConfig(CLIPConfig):
@@ -13,8 +10,8 @@ class GraphCLIPConfig(CLIPConfig):
     Configuration for GraphCLIPModel, which extends CLIP with a Graphormer encoder.
 
     Args:
-        graph_config (`Union[dict, GraphormerConfig]`):
-            Configuration (or dict) for the Graphormer graph encoder.
+        graph_config (`Dict`):
+            Configuration for the Graphormer graph encoder.
         graph_pair_type (`str`, *optional*, defaults to `"text"`):
             Which modality to pair against the graph in contrastive loss.
             One of `"text"` or `"image"`.
@@ -33,13 +30,7 @@ class GraphCLIPConfig(CLIPConfig):
 
     def __init__(
         self,
-        graph_config: Union[dict, GraphormerConfig] = GraphormerConfig(
-            hidden_size=512,
-            embedding_dim=512,
-            ffn_embedding_dim=512,
-            num_hidden_layers=6,
-            dropout=0.1,
-        ),
+        graph_config: Dict = None,
         graph_pair_type: str = "text",
         pretrained_model_name_or_path: Optional[str] = None,
         pretrained_graphormer_hub_id: Optional[str] = None,
@@ -50,7 +41,7 @@ class GraphCLIPConfig(CLIPConfig):
         """Initialize the GraphCLIPConfig.
 
         Args:
-            graph_config (Union[dict, GraphormerConfig]): Configuration for the Graphormer
+            graph_config (Dict, optional): Configuration for the Graphormer graph encoder.
             graph_pair_type (str, optional): Modality to pair with graph. Defaults to "text".
             pretrained_model_name_or_path (str, optional): Checkpoint for CLIP vision/text.
             pretrained_graphormer_hub_id (str, optional): Hub ID for pretrained Graphormer.
@@ -62,11 +53,8 @@ class GraphCLIPConfig(CLIPConfig):
 
         self.cache_dir = cache_dir
 
-        # build or assign the graph encoder config
-        if isinstance(graph_config, dict):
-            self.graph_config = GraphormerConfig(**graph_config)
-        else:
-            self.graph_config = graph_config
+        # assign the graph encoder config
+        self.graph_config = graph_config
 
         # which modality to pair the graph with
         if graph_pair_type not in ("text", "image"):

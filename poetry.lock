@@ -2258,6 +2258,29 @@ dev = ["coveralls (>=3.3,<5)", "mypy (>=1.10,<2)", "pytest (>=8,<9)", "pytest-as
 test = ["coveralls (>=3.3,<5)", "pytest (>=8,<9)", "pytest-asyncio (>=0.16,<2)", "pytest-benchmark (>=4,<5)", "pytest-cov (>=5,<6)", "pytest-mock (>=3,<4)"]
 
 [[package]]
+name = "graphormer-pyg"
+version = "0.1.0"
+description = "PyTorch Geometric implementation of Graphormer"
+optional = false
+python-versions = ">=3.8"
+groups = ["main"]
+files = []
+develop = false
+
+[package.dependencies]
+numpy = "*"
+scipy = "*"
+torch = "*"
+torch-geometric = "*"
+tqdm = "*"
+
+[package.source]
+type = "git"
+url = "https://github.com/helena-balabin/graphormer-pyg.git"
+reference = "main"
+resolved_reference = "9ac34745c4281b7c4fa8463667d627650710f95c"
+
+[[package]]
 name = "graphql-core"
 version = "3.2.7"
 description = "GraphQL implementation for Python, a port of GraphQL.js, the JavaScript reference implementation for GraphQL."
@@ -7392,6 +7415,38 @@ optree = ["optree (>=0.13.0)"]
 pyyaml = ["pyyaml"]
 
 [[package]]
+name = "torch-geometric"
+version = "2.7.0"
+description = "Graph Neural Network Library for PyTorch"
+optional = false
+python-versions = ">=3.10"
+groups = ["main"]
+files = [
+    {file = "torch_geometric-2.7.0-py3-none-any.whl", hash = "sha256:6e0cd3ad824d484651ef5d308fc66c687bfcf5ba040d56d1e0fe0f81f365e292"},
+    {file = "torch_geometric-2.7.0.tar.gz", hash = "sha256:f9099e4aece1a9f618c84dbaac33a77f43139736698c7e8bddf3301ef1f2e8d4"},
+]
+
+[package.dependencies]
+aiohttp = "*"
+fsspec = "*"
+jinja2 = "*"
+numpy = "*"
+psutil = ">=5.8.0"
+pyparsing = "*"
+requests = "*"
+tqdm = "*"
+xxhash = "*"
+
+[package.extras]
+benchmark = ["matplotlib", "networkx", "pandas", "protobuf (<4.21)", "wandb"]
+dev = ["ipython", "matplotlib-inline", "pre-commit", "torch_geometric[test]"]
+full = ["ase", "captum (<0.7.0)", "graphviz", "h5py", "matplotlib", "networkx", "numba (<0.60.0)", "opt_einsum", "pandas", "pynndescent", "pytorch-memlab", "rdflib", "rdkit", "scikit-image", "scikit-learn", "scipy", "statsmodels", "sympy", "tabulate", "torch_geometric[graphgym,modelhub]", "torchmetrics", "trimesh"]
+graphgym = ["protobuf (<4.21)", "pytorch-lightning", "yacs"]
+modelhub = ["huggingface_hub"]
+rag = ["accelerate", "datasets", "pandas", "pcst_fast", "sentencepiece", "torchmetrics", "transformers"]
+test = ["onnx", "onnxruntime", "onnxscript", "pytest", "pytest-cov"]
+
+[[package]]
 name = "torchmetrics"
 version = "1.8.2"
 description = "PyTorch native Metrics"
@@ -8202,4 +8257,4 @@ type = ["pytest-mypy"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11,<3.14"
-content-hash = "2fdebf15821e55d4c5d1dee62c385a09ed2a505e10efbf65e575fc4e24539663"
+content-hash = "187425728fb98b68e42557bc6751be956e3712f3f2048000f9201caa7bd6319d"
