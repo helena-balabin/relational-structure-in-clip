@@ -106,11 +106,6 @@ class ExtraTrainer(Trainer):
     Trainer that logs extra model outputs (like extra losses) in sync with normal logging.
     """
 
-    def __init__(self, enable_graph_probing=True, *args, **kwargs):
-        """Initialize ExtraTrainer."""
-        self.enable_graph_probing = enable_graph_probing
-        super().__init__(*args, **kwargs)
-
     def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
         """Compute loss and store extra outputs in TrainerState for callback access."""
         # Forward pass
@@ -129,14 +124,6 @@ class ExtraTrainer(Trainer):
 
 class ExtraCallback(TrainerCallback):
     """Logs extra losses to MLflow at the same frequency as normal Trainer logs, separated for train/eval."""
-
-    def __init__(self, enable_graph_probing=True):
-        """Initialize the callback.
-
-        Args:
-            enable_graph_probing (bool): Whether to enable graph probing during evaluation.
-        """
-        self.enable_graph_probing = enable_graph_probing
 
     def on_log(self, args, state, control, logs=None, **kwargs):
         """Log extra losses to MLflow."""
@@ -307,11 +294,7 @@ def train_graph_image_model(cfg: DictConfig):
                 cfg.training, "warmup_ratio_unfreeze", 0.5
             )
             warmup_steps = int(warmup_ratio_unfreeze * cfg.training.max_steps)
-            extra_cb = ExtraCallback(
-                enable_graph_probing=cfg.training.get(
-                    "enable_graph_probing", False
-                )
-            )
+            extra_cb = ExtraCallback()
             gradual_cb = WarmupGradualUnfreezeCallback(
                 model=model,
                 cfg=cfg,
@@ -319,9 +302,6 @@ def train_graph_image_model(cfg: DictConfig):
             )
 
             trainer = ExtraTrainer(
-                enable_graph_probing=cfg.training.get(
-                    "enable_graph_probing", False
-                ),
                 model=model,
                 args=training_args,
                 train_dataset=train_dataset,

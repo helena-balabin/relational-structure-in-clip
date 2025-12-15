@@ -35,7 +35,6 @@ training:
   persistent_workers: true
   dataloader_drop_last: true
   lr_scheduler_type: "linear"  # options: "linear", "constant", "cosine", etc.
-  enable_graph_probing: false
 
 mlflow:
   tracking_uri: /data/mlflow/
