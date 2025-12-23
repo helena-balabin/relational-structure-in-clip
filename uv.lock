@@ -2937,24 +2937,6 @@ wheels = [
 ]
 
 [[package]]
-name = "pygcl"
-version = "0.1.2"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "networkx" },
-    { name = "numpy" },
-    { name = "scikit-learn" },
-    { name = "scipy" },
-    { name = "torch" },
-    { name = "torch-geometric" },
-    { name = "tqdm" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/5b/27/56efd119c4bca62c5b27dc74eca26eca5833c9b8f4fba3f1ac35a44c76f1/PyGCL-0.1.2.tar.gz", hash = "sha256:ed2a2687937e60e317dd975cf48175e75c087beba1b04a383b541981dbb479c9", size = 24391, upload-time = "2022-03-20T14:05:10.171Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/c8/02/8ba70639aecb7521431849c7d68b4070f3017d7789d43ce91f914538fd35/PyGCL-0.1.2-py3-none-any.whl", hash = "sha256:2648cb568d999a982dbde646f268d68be023e9dee714128fec81beb23f4bf0bc", size = 32763, upload-time = "2022-03-20T14:05:08.646Z" },
-]
-
-[[package]]
 name = "pygit2"
 version = "1.19.0"
 source = { registry = "https://pypi.org/simple" }
@@ -3339,7 +3321,6 @@ dependencies = [
     { name = "pandas" },
     { name = "peft" },
     { name = "pillow" },
-    { name = "pygcl" },
     { name = "scikit-learn" },
     { name = "scipy" },
     { name = "torch" },
@@ -3386,7 +3367,6 @@ requires-dist = [
     { name = "pandas", specifier = ">=2.3.3,<3" },
     { name = "peft", specifier = ">=0.17.1,<1" },
     { name = "pillow", specifier = ">=11.3.0,<12" },
-    { name = "pygcl" },
     { name = "scikit-learn", specifier = ">=1.3.2,<2" },
     { name = "scipy", specifier = ">=1.16.3,<2" },
     { name = "torch", specifier = "==2.6.0", index = "https://download.pytorch.org/whl/cu126" },
