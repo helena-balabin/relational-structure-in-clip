@@ -6,7 +6,7 @@ data:
   cache_dir: /data/huggingface/datasets/
   seed: 42
   validation_split: 0.1
-  remove_columns: ["coco_id", "flickr_id"]
+  max_edges: 40
 
 model:
   huggingface_hub_model_id: "helena-balabin/graphormer-cl"
@@ -23,7 +23,7 @@ training:
   max_steps: 2500 # 100 steps for debug
   weight_decay: 0.01  # or 0.01
   logging_steps: 100 # 10 for debug
-  eval_steps: 100  # 10 for debug
+  eval_steps: 250  # 10 for debug
   save_steps: 500
   save_total_limit: 3
   warmup_ratio: 0.05 # optional: set to 0.05

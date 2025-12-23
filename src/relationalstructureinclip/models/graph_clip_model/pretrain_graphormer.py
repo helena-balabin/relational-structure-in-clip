@@ -8,12 +8,40 @@ import mlflow
 import torch
 from datasets import load_dataset
 from omegaconf import DictConfig
-from transformers import GraphormerConfig, Trainer, TrainingArguments
+from transformers import (
+    EarlyStoppingCallback,
+    GraphormerConfig,
+    Trainer,
+    TrainingArguments,
+)
 
 from relationalstructureinclip.models.graph_clip_model.modeling_graphormer import (
     GraphormerAugmentedCollator,
     GraphormerForGraphCL,
 )
+
+
+class GraphCLTrainer(Trainer):
+    """Trainer that always computes contrastive loss during eval (no labels needed)."""
+
+    def prediction_step(
+        self,
+        model,
+        inputs,
+        prediction_loss_only: bool,
+        ignore_keys=None,
+    ):
+        inputs = self._prepare_inputs(inputs)
+        with torch.no_grad():
+            outputs = model(**inputs, return_dict=True)
+
+        loss = outputs.loss.detach()
+        if prediction_loss_only:
+            return (loss, None, None)
+
+        # Expose embeddings as "logits" for completeness; labels unused
+        logits = outputs.g.detach() if hasattr(outputs, "g") else None
+        return (loss, logits, None)
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -67,19 +95,15 @@ def train_graphormer(cfg: DictConfig):
             dataset = dataset.filter(
                 lambda example: example["coco_id"] is None
             )
-            # Remove the columns from cfg.data.remove_columns if they exist
-            if hasattr(cfg.data, "remove_columns"):
-                cols_to_remove = [
-                    col
-                    for col in cfg.data.remove_columns
-                    if col in dataset.column_names
-                ]
-                if cols_to_remove:
-                    dataset = dataset.remove_columns(cols_to_remove)
             # Keep only the target graph column, and also only if
             # targer_graph_column["edge_index"][0] has length > 0
             dataset = dataset.filter(
                 lambda example: len(example[target_graph_column]["edge_index"][0]) > 0
+            )
+            # Optionally drop overly dense graphs to avoid OOM
+            max_edges = getattr(cfg.data, "max_edges", 40)
+            dataset = dataset.filter(
+                lambda example: len(example[target_graph_column]["edge_index"][0]) <= max_edges
             )
             # And unpack the target graph column into only "edge_index" and "num_nodes"
             def unpack_graph_column(example):
@@ -109,7 +133,6 @@ def train_graphormer(cfg: DictConfig):
             # Not to be confused with the train/test split from the load_dataset function
             train_dataset = dataset["train"]
             validation_dataset = dataset["test"]
-            print(train_dataset[0].keys())
 
             # Create a configuration for the GraphCLIP Model
             if cfg.model.graphormer_size == "small":
@@ -172,14 +195,27 @@ def train_graphormer(cfg: DictConfig):
                 warmup_ratio=getattr(cfg.training, "warmup_ratio", 0.05),
                 bf16=use_bf16,
                 fp16=use_fp16,
+                load_best_model_at_end=True,
+                metric_for_best_model="eval_loss",
+                greater_is_better=False,
             )
 
-            trainer = Trainer(
+            trainer = GraphCLTrainer(
                 model=model,
                 args=training_args,
                 train_dataset=train_dataset,
                 eval_dataset=validation_dataset,
                 data_collator=collator,
+                callbacks=[
+                    EarlyStoppingCallback(
+                        early_stopping_patience=getattr(
+                            cfg.training, "early_stopping_patience", 3
+                        ),
+                        early_stopping_threshold=getattr(
+                            cfg.training, "early_stopping_threshold", 0.0
+                        ),
+                    )
+                ],
             )
 
             trainer.train()
