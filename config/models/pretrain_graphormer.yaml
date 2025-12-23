@@ -1,7 +1,7 @@
 output_dir: /data/huggingface/transformers
 
 data:
-  dataloader_num_workers: 16
+  dataloader_num_workers: 1
   dataset_identifier: "helena-balabin/vg-captions-graphs"
   cache_dir: /data/huggingface/datasets/
   seed: 42
