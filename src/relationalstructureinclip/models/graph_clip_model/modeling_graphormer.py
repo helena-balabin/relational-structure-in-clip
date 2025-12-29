@@ -54,6 +54,11 @@ class GraphormerAugmentedCollator(GraphormerDataCollator):
 
         # Examples is a list of dicts with 'num_nodes' and 'edge_index' keys
         for ex in examples:
+            # Ensure original graph has at least 2 nodes to prevent Graphormer collator crash
+            if ex["num_nodes"] < 2:
+                ex["num_nodes"] = 2
+                ex["edge_index"] = [[0, 1], [1, 0]]
+
             edge_index = torch.as_tensor(ex["edge_index"], dtype=torch.long)
             if edge_index.numel() == 0:
                 edge_index = edge_index.view(2, 0)
@@ -64,8 +69,14 @@ class GraphormerAugmentedCollator(GraphormerDataCollator):
             if isinstance(edge_index_aug, tuple):
                 edge_index_aug, _ = edge_index_aug
 
+            # Ensure augmented graph has at least 2 nodes
+            aug_num_nodes = int(x_aug.size(0))
+            if aug_num_nodes < 2:
+                aug_num_nodes = 2
+                edge_index_aug = torch.tensor([[0, 1], [1, 0]], dtype=torch.long)
+
             ex_aug = {}
-            ex_aug["num_nodes"] = int(x_aug.size(0))
+            ex_aug["num_nodes"] = aug_num_nodes
             ex_aug["edge_index"] = edge_index_aug.cpu().tolist()
             # Add dummy "label" key to avoid issues in the base collator
             ex["labels"] = [0]

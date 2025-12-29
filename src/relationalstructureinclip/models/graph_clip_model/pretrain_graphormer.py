@@ -105,6 +105,14 @@ def train_graphormer(cfg: DictConfig):
             dataset = dataset.filter(
                 lambda example: len(example[target_graph_column]["edge_index"][0]) <= max_edges
             )
+            # Do the same for nodes (max of flat edge_index)
+            max_nodes = getattr(cfg.data, "max_nodes", 40)
+            dataset = dataset.filter(
+                lambda example: max(
+                    example[target_graph_column]["edge_index"][0]
+                    + example[target_graph_column]["edge_index"][1]
+                ) < max_nodes
+            )
             # And unpack the target graph column into only "edge_index" and "num_nodes"
             def unpack_graph_column(example):
                 graph_data = example[target_graph_column]
@@ -164,13 +172,21 @@ def train_graphormer(cfg: DictConfig):
                     cfg.output_dir, f"graphormer-{graph_type}"
                 ),
                 eval_strategy="steps",
+                logging_strategy="steps",
                 eval_steps=cfg.training.eval_steps,
                 save_strategy="steps",
                 save_steps=cfg.training.save_steps,
                 save_total_limit=cfg.training.save_total_limit,
                 learning_rate=cfg.training.learning_rate,
                 per_device_train_batch_size=cfg.training.batch_size,
-                per_device_eval_batch_size=cfg.training.batch_size,
+                per_device_eval_batch_size=getattr(
+                    cfg.training,
+                    "eval_batch_size",
+                    max(1, cfg.training.batch_size // 4),
+                ),
+                eval_accumulation_steps=getattr(
+                    cfg.training, "eval_accumulation_steps", 1
+                ),
                 gradient_accumulation_steps=cfg.training.gradient_accumulation_steps,
                 max_steps=cfg.training.max_steps,
                 dataloader_num_workers=cfg.data.dataloader_num_workers,
