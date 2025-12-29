@@ -6,20 +6,26 @@ import os
 import hydra
 import mlflow
 import torch
-from datasets import load_from_disk
+from datasets import load_dataset
 from omegaconf import DictConfig
-from transformers import (
-    GraphormerConfig,
-    Trainer,
-    TrainerCallback,
-    TrainingArguments,
+from relationalstructureinclip.models.graph_clip_model.collating_graph_clip import (
+    GraphCLIPCollator,
 )
-
 from relationalstructureinclip.models.graph_clip_model.configuration_graph_clip import (
     GraphCLIPConfig,
 )
 from relationalstructureinclip.models.graph_clip_model.modeling_graph_clip import (
     GraphCLIPModel,
+)
+from transformers import (
+    CLIPProcessor,
+    GraphormerConfig,
+    Trainer,
+    TrainerCallback,
+    TrainingArguments,
+)
+from transformers.models.deprecated.graphormer.collating_graphormer import (
+    GraphormerDataCollator,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -69,7 +75,7 @@ class WarmupGradualUnfreezeCallback(TrainerCallback):
 
     def _unfreeze(self, num_layers):
         """Unfreeze a specified number of layers; unfreeze CLIP heads at the first step."""
-        target = min(num_layers, self.total_layers)
+        target = min(num_layers, self.total_layers)  # type: ignore
         backbone_type = getattr(self.model, "graph_pair_type", "text")
         # If we're moving from 0 -> >=1, unfreeze projection heads and temperature right away
         if self.current_unfrozen == 0 and target >= 1:
@@ -93,7 +99,7 @@ class WarmupGradualUnfreezeCallback(TrainerCallback):
         )
 
         # Unfreeze a proportional number of layers
-        layers_to_unfreeze = int(progress * self.total_layers)
+        layers_to_unfreeze = int(progress * self.total_layers)  # type: ignore
 
         if layers_to_unfreeze > self.current_unfrozen:
             self._unfreeze(layers_to_unfreeze)
@@ -113,7 +119,7 @@ class ExtraTrainer(Trainer):
         loss = outputs["loss"]
 
         # Store outputs in TrainerState for callback to access
-        self.state.last_logged_losses = {
+        self.state.last_logged_losses = {  # type: ignore
             key: getattr(outputs, key).detach()
             for key in ("loss_graph_pair", "loss_image_text")
             if getattr(outputs, key, None) is not None
@@ -187,10 +193,35 @@ def train_graph_image_model(cfg: DictConfig):
             mlflow.log_param("current_graph_type", graph_type)
 
             # Load preprocessed data
-            dataset = load_from_disk(
-                cfg.data.local_dataset_identifier_processed
-                + "-"
-                + target_graph_column.replace("_", "-")
+            dataset = load_dataset(
+                cfg.data.dataset_hf_identifier,
+            )["train"]
+            dataset = dataset.rename_column(
+                target_graph_column, "graph_input"
+            )
+            # Filter out empty graphs (edge_index[0] has length 0)
+            dataset = dataset.filter(
+                lambda example: len(example["graph_input"]["edge_index"][0])
+                > 0
+            )
+            # Filter the dataset to only include entries with a coco_id,
+            # because the coco_id None entries were used for GraphCL
+            dataset = dataset.filter(
+                lambda example: example["coco_id"] is not None
+            )
+            # Re-calculate the number of nodes from graph_input edge_index
+            dataset = dataset.map(
+                lambda example: {
+                    "graph_input": {
+                        **example["graph_input"],
+                        "num_nodes":  # Flatten the 2 x n edge_index to find max node index
+                        int(
+                            max(example["graph_input"]["edge_index"][0] + example["graph_input"]["edge_index"][1])
+                            + 1
+                        ),
+                    }
+                },
+                batched=False,
             )
             # Remove the columns from cfg.data.remove_columns if they exist
             if hasattr(cfg.data, "remove_columns"):
@@ -227,21 +258,39 @@ def train_graph_image_model(cfg: DictConfig):
                     dropout=cfg.model.dropout,
                 )
 
+            # Get the pretrained Graphormer hub ID if specified
+            graphormer_id = cfg.model.get(
+                    "pretrained_graphormer_hub_id", None
+            )
+            if graphormer_id:
+                graphormer_id += f"-{graph_type.replace('_', '-')}"
+
             config = GraphCLIPConfig(
                 graph_config=graphormer_config,
-                pretrained_graphormer_hub_id=cfg.model.get(
-                    "pretrained_graphormer_hub_id", None
-                ),
+                pretrained_graphormer_hub_id=graphormer_id,
                 graph_pair_type=cfg.model.model_type,
                 pretrained_model_name_or_path=cfg.model.pretrained_model_name_or_path,
                 alpha=cfg.model.alpha,
                 cache_dir=cfg.model.get("cache_dir", None),
             )
 
+            # Initialize the processor and collator
+            processor = CLIPProcessor.from_pretrained(
+                cfg.model.pretrained_model_name_or_path,
+                cache_dir=cfg.model.get("cache_dir", None),
+            )
+            graph_collator = GraphormerDataCollator(on_the_fly_processing=True)
+
+            collator = GraphCLIPCollator(
+                processor=processor,
+                graph_collator=graph_collator,
+                image_dir=cfg.data.get("image_dir", None),
+            )
+
             # Initialize the model
             model = GraphCLIPModel(config)
             device = "cuda" if torch.cuda.is_available() else "cpu"
-            model.to(device)
+            model.to(device)  # type: ignore
 
             warmup_ratio = getattr(cfg.training, "warmup_ratio", 0.05)
             use_bf16 = (
@@ -262,8 +311,9 @@ def train_graph_image_model(cfg: DictConfig):
                 save_on_each_node=False,
                 learning_rate=cfg.training.learning_rate,
                 per_device_train_batch_size=cfg.training.batch_size,
-                per_device_eval_batch_size=cfg.training.batch_size,
+                per_device_eval_batch_size=cfg.training.eval_batch_size,
                 gradient_accumulation_steps=cfg.training.gradient_accumulation_steps,
+                eval_accumulation_steps=cfg.training.eval_accumulation_steps,
                 max_steps=cfg.training.max_steps,
                 dataloader_num_workers=cfg.data.dataloader_num_workers,
                 dataloader_prefetch_factor=cfg.training.prefetch_factor,
@@ -288,6 +338,7 @@ def train_graph_image_model(cfg: DictConfig):
                 bf16=use_bf16,
                 fp16=use_fp16,
                 remove_unused_columns=False,
+                gradient_checkpointing=True,
             )
 
             warmup_ratio_unfreeze = getattr(
@@ -306,6 +357,7 @@ def train_graph_image_model(cfg: DictConfig):
                 args=training_args,
                 train_dataset=train_dataset,
                 eval_dataset=validation_dataset,
+                data_collator=collator,
                 callbacks=[
                     extra_cb,
                     gradual_cb,
@@ -334,4 +386,4 @@ def train_graph_image_model(cfg: DictConfig):
 
 
 if __name__ == "__main__":
-    train_graph_image_model()
+    train_graph_image_model()  # type: ignore

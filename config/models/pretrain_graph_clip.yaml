@@ -1,36 +1,41 @@
 output_dir: /data/huggingface/transformers
 
 data:
-  dataloader_num_workers: 16
-  local_dataset_identifier_processed: "/data/huggingface/datasets/vg-captions-graphs-processed/processed"
+  dataloader_num_workers: 1
+  dataset_hf_identifier: "helena-balabin/vg-captions-graphs"
+  image_dir: /data/images/visual_genome/
+  cache_dir: /data/huggingface/datasets/
   seed: 42
   validation_split: 0.1
   remove_columns: ["coco_id", "flickr_id"]
 
 model:
   pretrained_model_name_or_path: "openai/clip-vit-base-patch32"
+  pretrained_graphormer_hub_id: "helena-balabin/graphormer-cl"
   huggingface_hub_model_id: "helena-balabin/graph-clip"
   cache_dir: /data/huggingface/transformers/
   model_type: "image"
   graph_types: ["image", "spatial_image", "action_image"] # List of graph types to train models for
-  graphormer_size: "base"
+  graphormer_size: "small"
   dropout: 0.1
   alpha: 0.5  # Set to 1.0 to only look at graph-image contrastive loss
 
 training:
-  batch_size: 256 # 32 for debug, also 256 * 4 GPUs is effective batch size of 1024
-  gradient_accumulation_steps: 1
+  batch_size: 64 # 32 for debug, also 64 * 2 * 4 GPUs is effective batch size of 512
+  gradient_accumulation_steps: 2
+  eval_batch_size: 16
+  eval_accumulation_steps: 4
   prefetch_factor: 2
   learning_rate: 3e-4
   max_steps: 2500 # 100 steps for debug
   weight_decay: 0.01  # or 0.01
   logging_steps: 100 # 10 for debug
-  eval_steps: 100  # 10 for debug
+  eval_steps: 250  # 10 for debug
   save_steps: 500
   save_total_limit: 3
   warmup_ratio: 0.05 # optional: set to 0.05
   warmup_ratio_unfreeze: 0.5  # fraction of total steps for gradual unfreezing
-  precision: "fp16" # options: "bf16", "fp16", "fp32"
+  precision: "bf16" # options: "bf16", "fp16", "fp32"
   pin_memory: true
   persistent_workers: true
   dataloader_drop_last: true

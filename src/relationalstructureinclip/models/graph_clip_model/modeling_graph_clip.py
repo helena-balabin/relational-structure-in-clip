@@ -5,53 +5,20 @@ from typing import Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
+from relationalstructureinclip.models.graph_clip_model.configuration_graph_clip import (
+    GraphCLIPConfig,
+)
+from relationalstructureinclip.models.graph_clip_model.modeling_graphormer import (
+    GraphormerForGraphCL,
+)
 from transformers import (
     CLIPModel,
     CLIPTextModel,
     CLIPVisionModel,
-    GraphormerForGraphClassification,
     GraphormerModel,
 )
-from transformers.modeling_outputs import (
-    BaseModelOutputWithNoAttention,
-    BaseModelOutputWithPooling,
-    ModelOutput,
-)
 from transformers.models.clip.modeling_clip import clip_loss
-
-from relationalstructureinclip.models.graph_clip_model.configuration_graph_clip import (
-    GraphCLIPConfig,
-)
-
-
-def check_embedding_collapse(embeds: torch.Tensor):
-    """
-    embeds: Tensor of shape [batch_size, embedding_dim]
-    """
-    # Normalize embeddings
-    embeds_norm = embeds / embeds.norm(dim=-1, keepdim=True)
-
-    # Compute pairwise cosine similarity
-    sim_matrix = embeds_norm @ embeds_norm.T
-    mask = ~torch.eye(sim_matrix.size(0), dtype=torch.bool, device=sim_matrix.device)
-    sim_vals = sim_matrix[mask]
-
-    mean_cos = sim_vals.mean().item()
-    std_cos = sim_vals.std().item()
-    print(f"Mean cosine similarity: {mean_cos:.4f}, std: {std_cos:.4f}")
-
-    # Per-dimension variance
-    dim_var = embeds_norm.var(dim=0)
-    print(f"Per-dim variance: min {dim_var.min():.4f}, max {dim_var.max():.4f}, mean {dim_var.mean():.4f}")
-
-    # Effective rank (entropy-based)
-    u, s, v = torch.svd(embeds_norm)
-    s = s / s.sum()
-    entropy = -(s * torch.log(s + 1e-12)).sum()
-    effective_rank = torch.exp(entropy)
-    print(f"Effective rank: {effective_rank:.2f}")
-
-    return mean_cos, std_cos, dim_var, effective_rank
+from transformers.utils.generic import ModelOutput
 
 
 @dataclass
@@ -63,28 +30,11 @@ class GraphCLIPOutput(ModelOutput):
         loss (torch.FloatTensor, optional): Loss value if return_loss is True.
         loss_graph_pair (torch.FloatTensor, optional): Loss value for graph-text or graph-image pairs.
         loss_image_text (torch.FloatTensor, optional): Loss value for image-text pairs.
-        logits_image_text (torch.FloatTensor): Logits for image-text pairs.
-        logits_graph_pair (torch.FloatTensor): Logits for graph-text or graph-image pairs.
-        image_embeds (torch.FloatTensor): Image embeddings.
-        graph_embeds (torch.FloatTensor): Graph embeddings.
-        text_embeds (torch.FloatTensor): Text embeddings.
-        vision_model_output (BaseModelOutputWithPooling): Output from the vision model.
-        text_model_output (BaseModelOutputWithPooling): Output from the text model.
-        graph_model_output (BaseModelOutputWithNoAttention): Output from the graph model.
     """
 
     loss: Optional[torch.FloatTensor] = None
     loss_graph_pair: Optional[torch.FloatTensor] = None
     loss_image_text: Optional[torch.FloatTensor] = None
-    logits_image_text: torch.FloatTensor = None
-    logits_graph_pair: torch.FloatTensor = None
-    image_embeds: torch.FloatTensor = None
-    graph_embeds: torch.FloatTensor = None
-    text_embeds: torch.FloatTensor = None
-    vision_model_output: BaseModelOutputWithPooling = None
-    text_model_output: BaseModelOutputWithPooling = None
-    graph_model_output: BaseModelOutputWithNoAttention = None
-
 
 class GraphCLIPModel(CLIPModel):
     """GraphCLIP Model integrating Graphormer + CLIP for contrastive learning in Image, Text, and Graph modalities."""
@@ -115,24 +65,29 @@ class GraphCLIPModel(CLIPModel):
 
         # Initialize Graphormer model - load pretrained if specified
         if config.pretrained_graphormer_hub_id:
-            self.graph_model = GraphormerForGraphClassification.from_pretrained(
+            graphormer_pretrained = GraphormerForGraphCL.from_pretrained(
                 config.pretrained_graphormer_hub_id,
                 cache_dir=config.cache_dir,
-            ).encoder
+            )
+            self.graph_model = graphormer_pretrained.encoder
+            # Projection layer for graph embeddings
+            self.graph_projection = graphormer_pretrained.graph_projection
         else:
             self.graph_model = GraphormerModel._from_config(graph_config)
-
-        # Projection layer for graph embeddings
-        self.graph_projection = nn.Linear(
-            graph_config.hidden_size, config.projection_dim, bias=False
-        )
+            # Projection layer for graph embeddings
+            self.graph_projection = nn.Linear(
+                graph_config.hidden_size, config.projection_dim, bias=False
+            )
 
         # Determine the graph pair type (either "text" or "image")
         self.graph_pair_type = (
             config.graph_pair_type
         )  # Should be "text" or "image"
 
-    def forward(
+        # Initialize weights and apply final processing
+        self.post_init()
+
+    def forward(  # type: ignore
         self,
         input_ids: Optional[torch.LongTensor] = None,
         pixel_values: Optional[torch.FloatTensor] = None,
@@ -246,14 +201,6 @@ class GraphCLIPModel(CLIPModel):
             output = (
                 loss_graph_pair,
                 loss_image_text,
-                logits_image_text,
-                logits_graph_pair,
-                image_embeds,
-                graph_embeds,
-                text_embeds,
-                vision_outputs,
-                text_outputs,
-                graph_outputs,
             )
             return ((loss,) + output) if loss is not None else output
 
@@ -261,14 +208,6 @@ class GraphCLIPModel(CLIPModel):
             loss=loss,
             loss_graph_pair=loss_graph_pair,
             loss_image_text=loss_image_text,
-            logits_image_text=logits_image_text,
-            logits_graph_pair=logits_graph_pair,
-            image_embeds=image_embeds,
-            graph_embeds=graph_embeds,
-            text_embeds=text_embeds,
-            vision_model_output=vision_outputs,
-            text_model_output=text_outputs,
-            graph_model_output=graph_outputs,
         )
 
     def freeze_layers(
