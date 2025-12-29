@@ -1,23 +1,22 @@
 """Script to pretrain the Graphormer part of GraphCLIP using Hugging Faces Trainer."""
 
-import os
 import logging
+import os
 
 import hydra
 import mlflow
 import torch
 from datasets import load_dataset
 from omegaconf import DictConfig
+from relationalstructureinclip.models.graph_clip_model.modeling_graphormer import (
+    GraphormerAugmentedCollator,
+    GraphormerForGraphCL,
+)
 from transformers import (
     EarlyStoppingCallback,
     GraphormerConfig,
     Trainer,
     TrainingArguments,
-)
-
-from relationalstructureinclip.models.graph_clip_model.modeling_graphormer import (
-    GraphormerAugmentedCollator,
-    GraphormerForGraphCL,
 )
 
 
@@ -31,6 +30,7 @@ class GraphCLTrainer(Trainer):
         prediction_loss_only: bool,
         ignore_keys=None,
     ):
+        """Perform a prediction step on `model` using `inputs`."""
         inputs = self._prepare_inputs(inputs)
         with torch.no_grad():
             outputs = model(**inputs, return_dict=True)

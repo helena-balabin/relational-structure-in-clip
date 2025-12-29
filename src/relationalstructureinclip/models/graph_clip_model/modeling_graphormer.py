@@ -3,8 +3,8 @@
 from dataclasses import dataclass
 from typing import Dict, Optional, Union
 
-from GCL import augmentors
-from GCL import losses
+import torch
+from GCL import augmentors, losses
 from GCL.models import DualBranchContrast
 from transformers import (
     GraphormerConfig,
@@ -13,7 +13,6 @@ from transformers import (
 )
 from transformers.models.deprecated.graphormer.collating_graphormer import GraphormerDataCollator
 from transformers.utils.generic import ModelOutput
-import torch
 
 
 class GraphormerAugmentedCollator(GraphormerDataCollator):
@@ -46,6 +45,7 @@ class GraphormerAugmentedCollator(GraphormerDataCollator):
         ], 1)
 
     def __call__(self, examples: list) -> Dict[str, torch.Tensor]:
+        """Collate a batch of examples."""
         return self.collate_batch(examples)
 
     def collate_batch(self, examples: list) -> Dict[str, torch.Tensor]:
@@ -117,6 +117,7 @@ class CLIPStyleProjector(torch.nn.Module):
         self.linear = torch.nn.Linear(input_dim, output_dim, bias=False)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward pass of the CLIP-style projection head."""
         x = self.linear(x)
         # 2. L2 Normalization (for Cosine Similarity)
         return torch.nn.functional.normalize(x, p=2, dim=-1)

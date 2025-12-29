@@ -218,7 +218,7 @@ def convert_hyco_clip_state_dict_to_hf(
             dim : 2 * dim, :
         ]
         hf_state_dict[f"{prefix_hf}.self_attn.v_proj.weight"] = qkv[
-            2 * dim :, :
+            2 * dim:, :
         ]
 
         hf_state_dict[f"{prefix_hf}.self_attn.q_proj.bias"] = qkv_bias[:dim]
@@ -226,7 +226,7 @@ def convert_hyco_clip_state_dict_to_hf(
             dim : 2 * dim
         ]
         hf_state_dict[f"{prefix_hf}.self_attn.v_proj.bias"] = qkv_bias[
-            2 * dim :
+            2 * dim:
         ]
 
         # Attention out projection
@@ -306,7 +306,7 @@ def convert_hyco_clip_state_dict_to_hf(
             dim : 2 * dim, :
         ]
         hf_state_dict[f"{prefix_hf}.self_attn.v_proj.weight"] = qkv[
-            2 * dim :, :
+            2 * dim:, :
         ]
 
         hf_state_dict[f"{prefix_hf}.self_attn.q_proj.bias"] = qkv_bias[:dim]
@@ -314,7 +314,7 @@ def convert_hyco_clip_state_dict_to_hf(
             dim : 2 * dim
         ]
         hf_state_dict[f"{prefix_hf}.self_attn.v_proj.bias"] = qkv_bias[
-            2 * dim :
+            2 * dim:
         ]
 
         # Attention out projection
