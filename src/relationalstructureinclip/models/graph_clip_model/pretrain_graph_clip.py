@@ -372,11 +372,18 @@ def train_graph_image_model(cfg: DictConfig):
                     cfg.output_dir, f"graph-clip-model-{graph_type}"
                 )
                 trainer.save_model(model_save_path)
-                model.push_to_hub(
-                    cfg.model.huggingface_hub_model_id
-                    + "-"
-                    + graph_type.replace("_", "-")
-                )
+                try:
+                    model.push_to_hub(
+                        cfg.model.huggingface_hub_model_id
+                        + "-"
+                        + graph_type.replace("_", "-")
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "push_to_hub failed for %s: %s; continuing.",
+                        graph_type,
+                        e,
+                    )
 
             logger.info(f"Successfully trained model for {graph_type}")
 
