@@ -223,6 +223,21 @@ def train_graph_image_model(cfg: DictConfig):
                 },
                 batched=False,
             )
+
+            # Drop single-node graphs (often self-loops only) that break Graphormer preprocessing
+            dataset = dataset.filter(
+                lambda example: example["graph_input"]["num_nodes"] > 1
+            )
+
+            # Filter overly large graphs using configured limits
+            def _within_limits(example):
+                edge_index = example["graph_input"]["edge_index"]
+                num_edges = len(edge_index[0])
+                num_nodes = example["graph_input"]["num_nodes"]
+                return num_nodes <= int(cfg.data.max_nodes) and num_edges <= int(cfg.data.max_edges)
+
+            dataset = dataset.filter(_within_limits)
+
             # Remove the columns from cfg.data.remove_columns if they exist
             if hasattr(cfg.data, "remove_columns"):
                 cols_to_remove = [
