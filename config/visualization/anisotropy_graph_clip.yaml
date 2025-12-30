@@ -1,0 +1,29 @@
+# Configuration for visualizing anisotropy in Graph CLIP embedding space
+# This script calculates and visualizes the cosine similarity distribution
+# of embeddings to inspect for anisotropy (narrow cone effect).
+
+# Dataset settings
+dataset_hf_identifier: "helena-balabin/vg-captions-graphs"
+dataset_cache_dir: /data/huggingface/datasets/
+dataset_split: "train[:1000]"  # Use a subset for faster analysis
+image_dir: "/data/vg/VG_100K"
+
+# Model settings
+model_hf_identifier: "helena-balabin/graph-clip-image"
+baseline_model_hf_identifier: "openai/clip-vit-base-patch32"
+batch_size: 32
+
+# Output settings
+output_dir: "outputs/visualizations"
+output_filename: "anisotropy_cone_3d.png"
+output_dpi: 300
+output_format: "png"
+save_plot: true
+show_plot: false
+
+# Plot appearance
+plot_title: "3D Visualization of Embedding Cone (Truncated SVD)"
+plot_xlabel: "Component 1"
+plot_ylabel: "Component 2"
+plot_zlabel: "Component 3"
+plot_color: "#b7d12a"  # Matcha green
