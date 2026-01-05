@@ -1,8 +1,9 @@
 """Preprocess VG data for GraphCLIP training."""
 
 import logging
+from collections import Counter
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import hydra
 import networkx as nx
@@ -54,15 +55,19 @@ def derive_image_graphs(
     vg_visual_verbs_file: str,
     cfg: DictConfig,
     image_ids: Optional[List[str]] = None,
+    node_synset_to_id: Optional[Dict[str, int]] = None,
+    edge_synset_to_id: Optional[Dict[str, int]] = None,
+    vg_objects_dataset=None,
+    vg_relationships_dataset=None,
 ):
     """Get graph data for VG images."""
-    vg_objects = load_dataset(
+    vg_objects = vg_objects_dataset or load_dataset(
         "json",
         data_files=str(vg_objects_file),
         split="train",
         cache_dir=cfg.cache_dir,
     )
-    vg_relationships = load_dataset(
+    vg_relationships = vg_relationships_dataset or load_dataset(
         "json",
         data_files=str(vg_relationships_file),
         split="train",
@@ -98,23 +103,38 @@ def derive_image_graphs(
         image_id = obj["image_id"]
         graph = nx.DiGraph()
 
-        # Add nodes
+        # Add nodes with type ids derived from synsets
         for o in obj["objects"]:
-            graph.add_node(o["object_id"])
+            node_synset = get_primary_synset(o.get("synsets", []))
+            node_type_id = map_synset_to_id(
+                node_synset,
+                node_synset_to_id,
+                cfg.get("oov_token", "<OOV>"),
+            )
+            graph.add_node(o["object_id"], node_type=node_type_id)
 
-        # Add edges
+        # Add edges with type ids derived from relationship synsets
         for r in rel["relationships"]:
             if (
                 r["subject"]["object_id"] in graph.nodes
                 and r["object"]["object_id"] in graph.nodes
             ):
+                edge_synset = get_primary_synset(r.get("synsets", []))
+                edge_type_id = map_synset_to_id(
+                    edge_synset,
+                    edge_synset_to_id,
+                    cfg.get("oov_token", "<OOV>"),
+                )
                 graph.add_edge(
                     r["object"]["object_id"],
                     r["subject"]["object_id"],
                     rel_id=r["relationship_id"],
+                    edge_type=edge_type_id,
                 )
 
-        graphs[image_id] = calculate_graphormer_attributes(graph)
+        graphs[image_id] = calculate_graphormer_attributes(
+            graph, include_types=True
+        )
 
         # Filter for action relationships
         action_rels = [
@@ -140,7 +160,9 @@ def derive_image_graphs(
         ]
         action_graph = nx.DiGraph(action_edges)
         action_graph.remove_nodes_from(list(nx.isolates(action_graph)))
-        action_graphs[image_id] = calculate_graphormer_attributes(action_graph)
+        action_graphs[image_id] = calculate_graphormer_attributes(
+            action_graph, include_types=True
+        )
 
         # Filter for spatial relationships
         spatial_rels = [
@@ -161,7 +183,7 @@ def derive_image_graphs(
         spatial_graph = nx.DiGraph(spatial_edges)
         spatial_graph.remove_nodes_from(list(nx.isolates(spatial_graph)))
         spatial_graphs[image_id] = calculate_graphormer_attributes(
-            spatial_graph
+            spatial_graph, include_types=True
         )
 
     return graphs, action_graphs, spatial_graphs
@@ -190,17 +212,90 @@ def check_if_living_being(synset: str) -> bool:
         return False
 
 
-def calculate_graphormer_attributes(graph: nx.Graph) -> Dict[str, Any]:
-    """Calculate edge_index for a networkx graph."""
+def calculate_graphormer_attributes(
+    graph: nx.Graph, include_types: bool = False
+) -> Dict[str, Any]:
+    """Calculate edge_index (and optional type ids) for a networkx graph."""
     node_mapping = {node: idx for idx, node in enumerate(graph.nodes())}
-    relabeled_graph = nx.relabel_nodes(graph, node_mapping)
+    relabeled_graph = nx.relabel_nodes(graph, node_mapping, copy=True)
 
-    edges = list(relabeled_graph.edges())
+    edges = list(relabeled_graph.edges(data=True))
     if not edges:
-        return {"edge_index": [[], []]}
+        base = {"edge_index": [[], []]}
+        if include_types:
+            base["edge_type"] = []
+            base["node_type"] = [
+                relabeled_graph.nodes[n].get("node_type", 0)
+                for n in relabeled_graph.nodes()
+            ]
+        return base
 
-    edge_index = list(map(list, zip(*edges)))
-    return {"edge_index": edge_index}
+    edge_index = list(map(list, zip(*[(u, v) for u, v, _ in edges])))
+    result: Dict[str, Any] = {"edge_index": edge_index}
+    if include_types:
+        result["edge_type"] = [
+            data.get("edge_type", 0) for _, _, data in edges
+        ]
+        result["node_type"] = [
+            relabeled_graph.nodes[n].get("node_type", 0)
+            for n in relabeled_graph.nodes()
+        ]
+    return result
+
+
+def get_primary_synset(synsets: List[str]) -> str:
+    """Return the first synset string if available."""
+    return synsets[0] if synsets else ""
+
+
+def map_synset_to_id(
+    synset: str,
+    synset_to_id: Optional[Dict[str, int]],
+    oov_token: str,
+) -> int:
+    """Map a synset string to its integer id with OOV fallback."""
+    if synset_to_id is None:
+        return 0
+    return synset_to_id.get(synset, synset_to_id.get(oov_token, 0))
+
+
+def build_synset_vocab(
+    counter: Counter,
+    top_k: int,
+    oov_token: str,
+) -> Dict[str, int]:
+    """Build a synset->id vocab with OOV at index 0."""
+    vocab = {oov_token: 0}
+    for idx, (synset, _) in enumerate(counter.most_common(top_k), start=1):
+        vocab[synset] = idx
+    return vocab
+
+
+def collect_synset_frequencies(
+    vg_objects,
+    vg_relationships,
+    image_ids: Optional[List[str]] = None,
+) -> Tuple[Counter, Counter]:
+    """Compute frequency counters for node and edge synsets."""
+    node_counter: Counter = Counter()
+    edge_counter: Counter = Counter()
+
+    image_ids_set = set(image_ids) if image_ids else None
+    for obj, rel in zip(vg_objects, vg_relationships):
+        if image_ids_set and obj["image_id"] not in image_ids_set:
+            continue
+
+        for o in obj["objects"]:
+            synset = get_primary_synset(o.get("synsets", []))
+            if synset:
+                node_counter[synset] += 1
+
+        for r in rel["relationships"]:
+            synset = get_primary_synset(r.get("synsets", []))
+            if synset:
+                edge_counter[synset] += 1
+
+    return node_counter, edge_counter
 
 
 @hydra.main(
@@ -233,12 +328,47 @@ def preprocess_vg_for_graphormer(cfg: DictConfig) -> None:
                 vg_metadata_dir / "visual_verbnet_beta2015.json"
             )
 
+            # Build synset vocabularies (top-K + OOV) for nodes and edges
+            vg_objects_dataset = load_dataset(
+                "json",
+                data_files=str(vg_objects_file),
+                split="train",
+                cache_dir=cfg.cache_dir,
+            )
+            vg_relationships_dataset = load_dataset(
+                "json",
+                data_files=str(vg_relationships_file),
+                split="train",
+                cache_dir=cfg.cache_dir,
+            )
+
+            node_counter, edge_counter = collect_synset_frequencies(
+                vg_objects_dataset,
+                vg_relationships_dataset,
+                vg_metadata[cfg.vg_image_id_col],
+            )
+
+            node_synset_to_id = build_synset_vocab(
+                node_counter,
+                top_k=cfg.get("top_k_node_types", 1500),
+                oov_token=cfg.get("oov_token", "<OOV>"),
+            )
+            edge_synset_to_id = build_synset_vocab(
+                edge_counter,
+                top_k=cfg.get("top_k_edge_types", 300),
+                oov_token=cfg.get("oov_token", "<OOV>"),
+            )
+
             graphs, action_graphs, spatial_graphs = derive_image_graphs(
                 vg_objects_file,
                 vg_relationships_file,
                 vg_visual_verbs_file,
                 cfg,
                 vg_metadata[cfg.vg_image_id_col],
+                node_synset_to_id=node_synset_to_id,
+                edge_synset_to_id=edge_synset_to_id,
+                vg_objects_dataset=vg_objects_dataset,
+                vg_relationships_dataset=vg_relationships_dataset,
             )
 
             # Remove existing graph columns if present
@@ -308,7 +438,16 @@ def preprocess_vg_for_graphormer(cfg: DictConfig) -> None:
         vg_complete = concatenate_datasets([vg_metadata, vg_coco]).shuffle(
             seed=cfg.seed
         )
-        vg_complete.save_to_disk(cfg.vg_processed_dir)
+        output_dir = cfg.get("typed_output_dir", cfg.vg_processed_dir)
+        vg_complete.save_to_disk(output_dir)
+
+        push_id = cfg.get("push_to_hub_identifier")
+        if push_id:
+            logger.info(
+                "Pushing dataset with typed graphs to hub identifier: %s",
+                push_id,
+            )
+            vg_complete.push_to_hub(push_id)
 
 
 if __name__ == "__main__":
