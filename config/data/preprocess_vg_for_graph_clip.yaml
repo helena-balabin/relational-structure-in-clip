@@ -7,7 +7,6 @@ vg_metadata_hf_identifier: "helena-balabin/vg-without-coco-captions"
 vg_metadata_split: "train"
 vg_captions_column: "caption"
 vg_processed_dir: "/scratch/hbalabin/huggingface/datasets/vg-captions-graphs"
-typed_output_dir: "/scratch/hbalabin/huggingface/datasets/vg-captions-graphs-transe-topk"
 vg_coco_overlap_hf_identifier: "helena-balabin/vg_actions_spatial_for_graphormer_with_text"
 vg_coco_split: "train"
 vg_coco_column: "coco_id"
@@ -15,9 +14,3 @@ cache_dir: "/scratch/hbalabin/huggingface/datasets"
 vg_image_id_col: "image_id"
 include_image_graphs: True
 flatten_captions: True
-
-# --- Synset typing for TransE ---
-top_k_node_types: 1500
-top_k_edge_types: 300
-oov_token: "<OOV>"
-push_to_hub_identifier: null
