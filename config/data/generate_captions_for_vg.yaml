@@ -14,6 +14,7 @@ temperature: 1.0  # Temperature for diversity
 
 vg_dir: "/data/vg/VG_100K"
 output_dataset_path: "/data/huggingface/datasets/vg_captions"
+output_hf_identifier: "helena-balabin/vg-captions"
 batch_size: 16
 
 n_examples: 20

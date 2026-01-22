@@ -148,6 +148,10 @@ def generate_captions(cfg: DictConfig):
     dataset.save_to_disk(output_path)
     logging.info(f"Saved captions to {output_path}")
 
+    # Push the dataset to the Hub
+    dataset.push_to_hub(cfg.output_hf_identifier)
+    logging.info(f"Pushed dataset to Hub: {cfg.output_hf_identifier}")
+
 
 if __name__ == "__main__":
     """Main entry point."""
