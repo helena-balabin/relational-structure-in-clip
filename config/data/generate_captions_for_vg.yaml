@@ -1,7 +1,8 @@
 model_name: "Salesforce/blip-image-captioning-base"
 model_cache_dir: "/data/huggingface/transformers"
 
-dataset_name: "helena-balabin/vg_for_graphormer"
+dataset_name: "ranjaykrishna/visual_genome"
+version: "region_description_v1.2.0"
 data_cache_dir: "/data/huggingface/datasets"
 split: "train"
 max_new_tokens: 50

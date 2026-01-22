@@ -107,7 +107,10 @@ def generate_captions(cfg: DictConfig):
 
     # Load dataset and filter out images already matched to COCO
     dataset = load_dataset(
-        cfg.dataset_name, split=cfg.split, cache_dir=cfg.data_cache_dir
+        cfg.dataset_name,
+        cfg.version,
+        split=cfg.split,
+        cache_dir=cfg.data_cache_dir,
     )
     dataset = dataset.filter(lambda x: x["coco_id"] is None)
 
