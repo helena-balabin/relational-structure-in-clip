@@ -8,8 +8,10 @@ import mlflow
 import torch
 from datasets import load_dataset
 from omegaconf import DictConfig
-from relationalstructureinclip.models.graph_clip_model.modeling_graphormer import (
+from relationalstructureinclip.models.graph_clip_model.collating_graphormer import (
     GraphormerAugmentedCollator,
+)
+from relationalstructureinclip.models.graph_clip_model.modeling_graphormer import (
     GraphormerForGraphCL,
 )
 from transformers import (
@@ -83,7 +85,7 @@ def train_graphormer(cfg: DictConfig):
             cfg_without_output_dir = cfg.copy()
             if "output_dir" in cfg_without_output_dir:
                 del cfg_without_output_dir.output_dir
-            mlflow.log_params(cfg_without_output_dir)
+            mlflow.log_params(cfg_without_output_dir)  # type: ignore
             mlflow.log_param("current_graph_type", graph_type)
 
             # Load preprocessed data
