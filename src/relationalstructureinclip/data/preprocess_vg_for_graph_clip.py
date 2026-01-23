@@ -1,5 +1,6 @@
 """Preprocess VG data for GraphCLIP training."""
 
+import json
 import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -16,36 +17,6 @@ from omegaconf import DictConfig
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-
-def flatten_captions(
-    dataset: Dataset, caption_column: str = "caption"
-) -> Dataset:
-    """Explode caption lists so each caption becomes a separate example."""
-    other_columns = [
-        col for col in dataset.column_names if col != caption_column
-    ]
-
-    def _explode_batch(batch):
-        expanded = {col: [] for col in other_columns}
-        expanded["sentences_raw"] = []
-
-        for idx, captions in enumerate(batch[caption_column]):
-            if not captions:
-                continue
-            captions = (
-                [captions] if isinstance(captions, str) else list(captions)
-            )
-
-            for caption in captions:
-                expanded["sentences_raw"].append(str(caption))
-                for col in other_columns:
-                    expanded[col].append(batch[col][idx])
-        return expanded
-
-    return dataset.map(
-        _explode_batch, batched=True, remove_columns=dataset.column_names
-    )
 
 
 def derive_image_graphs(
@@ -93,6 +64,8 @@ def derive_image_graphs(
     ]
 
     graphs, action_graphs, spatial_graphs = {}, {}, {}
+    node_vocab = {"obj.unknown": 0}
+    edge_vocab = {"rel.unknown": 0}
 
     for obj, rel in zip(vg_objects, vg_relationships):
         image_id = obj["image_id"]
@@ -100,7 +73,10 @@ def derive_image_graphs(
 
         # Add nodes
         for o in obj["objects"]:
-            graph.add_node(o["object_id"])
+            graph.add_node(
+                o["object_id"],
+                type=o["synsets"][0] if o.get("synsets") else "obj.unknown",
+            )
 
         # Add edges
         for r in rel["relationships"]:
@@ -112,9 +88,12 @@ def derive_image_graphs(
                     r["object"]["object_id"],
                     r["subject"]["object_id"],
                     rel_id=r["relationship_id"],
+                    type=r["synsets"][0] if r.get("synsets") else "rel.unknown",
                 )
 
-        graphs[image_id] = calculate_graphormer_attributes(graph)
+        graphs[image_id] = calculate_graphormer_attributes(
+            graph, node_vocab, edge_vocab
+        )
 
         # Filter for action relationships
         action_rels = [
@@ -140,7 +119,9 @@ def derive_image_graphs(
         ]
         action_graph = nx.DiGraph(action_edges)
         action_graph.remove_nodes_from(list(nx.isolates(action_graph)))
-        action_graphs[image_id] = calculate_graphormer_attributes(action_graph)
+        action_graphs[image_id] = calculate_graphormer_attributes(
+            action_graph, node_vocab, edge_vocab
+        )
 
         # Filter for spatial relationships
         spatial_rels = [
@@ -161,7 +142,7 @@ def derive_image_graphs(
         spatial_graph = nx.DiGraph(spatial_edges)
         spatial_graph.remove_nodes_from(list(nx.isolates(spatial_graph)))
         spatial_graphs[image_id] = calculate_graphormer_attributes(
-            spatial_graph
+            spatial_graph, node_vocab, edge_vocab
         )
 
     return graphs, action_graphs, spatial_graphs
@@ -190,17 +171,46 @@ def check_if_living_being(synset: str) -> bool:
         return False
 
 
-def calculate_graphormer_attributes(graph: nx.Graph) -> Dict[str, Any]:
+def calculate_graphormer_attributes(
+    graph: nx.Graph,
+    node_vocab: Dict[str, int],
+    edge_vocab: Dict[str, int],
+) -> Dict[str, Any]:
     """Calculate edge_index for a networkx graph."""
     node_mapping = {node: idx for idx, node in enumerate(graph.nodes())}
     relabeled_graph = nx.relabel_nodes(graph, node_mapping)
 
-    edges = list(relabeled_graph.edges())
-    if not edges:
-        return {"edge_index": [[], []]}
+    node_feat = []
+    for n in sorted(relabeled_graph.nodes()):
+        synset = relabeled_graph.nodes[n].get("type", "obj.unknown")
+        if synset not in node_vocab:
+            node_vocab[synset] = len(node_vocab)
+        node_feat.append([node_vocab[synset]])
 
-    edge_index = list(map(list, zip(*edges)))
-    return {"edge_index": edge_index}
+    edges = list(relabeled_graph.edges(data=True))
+    if not edges:
+        return {
+            "edge_index": [[], []],
+            "edge_attr": [],
+            "num_nodes": len(graph.nodes()),
+            "node_feat": node_feat,
+        }
+
+    edge_index = list(map(list, zip(*[(u, v) for u, v, _ in edges])))
+
+    edge_attr = []
+    for _, _, d in edges:
+        synset = d.get("type", "rel.unknown")
+        if synset not in edge_vocab:
+            edge_vocab[synset] = len(edge_vocab)
+        edge_attr.append([edge_vocab[synset]])
+
+    return {
+        "edge_index": edge_index,
+        "edge_attr": edge_attr,
+        "num_nodes": len(graph.nodes()),
+        "node_feat": node_feat,
+    }
 
 
 @hydra.main(
@@ -210,105 +220,117 @@ def calculate_graphormer_attributes(graph: nx.Graph) -> Dict[str, Any]:
 def preprocess_vg_for_graphormer(cfg: DictConfig) -> None:
     """Preprocess VG data for GraphCLIP training."""
 
-    # Stage 1: Add attributes
-    if cfg.get("load_stage_one_from_hub"):
-        intermediate_dataset = load_dataset(
-            cfg.load_stage_one_from_hub, cache_dir=cfg.cache_dir, split="train"
-        )
-        intermediate_dataset.save_to_disk(
-            cfg.vg_processed_dir, num_proc=cfg.num_proc
-        )
-    else:
-        vg_metadata_dir = Path(cfg.vg_metadata_dir)
-        vg_metadata = load_dataset(
-            cfg.vg_metadata_hf_identifier,
-            cache_dir=cfg.cache_dir,
-            split=cfg.vg_metadata_split,
-        )
+    vg_metadata_dir = Path(cfg.vg_metadata_dir)
+    vg_without_coco = load_dataset(
+        cfg.vg_without_coco_hf_identifier,
+        cache_dir=cfg.cache_dir,
+        split=cfg.vg_without_coco_split,
+    )
+    vg_coco = load_dataset(
+        cfg.vg_coco_overlap_hf_identifier,
+        cache_dir=cfg.cache_dir,
+        split=cfg.vg_coco_split,
+    )
+    vg_coco = vg_coco.filter(
+        lambda x: [ex is not None for ex in x[cfg.vg_coco_column]],
+        batched=True,
+        num_proc=cfg.num_proc,
+    )
+    # Rename vg_coco_column to "coco_id" to match the two datasets
+    vg_coco = vg_coco.rename_column(
+        cfg.vg_coco_column, "coco_id"
+    )
+    # and remove the "vg_" prefix from any columns
+    vg_coco = vg_coco.rename_columns(
+        {
+            col: col.replace("vg_", "")
+            for col in vg_coco.column_names
+            if col.startswith("vg_")
+        }
+    )
 
-        if cfg.include_image_graphs:
-            vg_objects_file = vg_metadata_dir / "objects.json"
-            vg_relationships_file = vg_metadata_dir / "relationships.json"
-            vg_visual_verbs_file = (
-                vg_metadata_dir / "visual_verbnet_beta2015.json"
-            )
+    overlapping_columns = set(vg_without_coco.column_names) & set(
+        vg_coco.column_names
+    )
+    # Log the overlapping columns
+    logger.info(
+        f"Overlapping columns between VG without COCO and VG COCO datasets: {overlapping_columns}"
+    )
+    vg_coco = vg_coco.remove_columns(
+        [
+            col
+            for col in vg_coco.column_names
+            if col not in overlapping_columns
+        ]
+    )
+    vg_without_coco = vg_without_coco.remove_columns(
+        [
+            col
+            for col in vg_without_coco.column_names
+            if col not in overlapping_columns
+        ]
+    )
 
-            graphs, action_graphs, spatial_graphs = derive_image_graphs(
-                vg_objects_file,
-                vg_relationships_file,
-                vg_visual_verbs_file,
-                cfg,
-                vg_metadata[cfg.vg_image_id_col],
-            )
+    vg_complete = concatenate_datasets([vg_without_coco, vg_coco])
+    # Log the length of the combined dataset
+    logger.info(f"Length of combined VG dataset: {len(vg_complete)}")
 
-            # Remove existing graph columns if present
-            for col in [
-                "image_graphs",
-                "action_image_graphs",
-                "spatial_image_graphs",
-            ]:
-                if col in vg_metadata.column_names:
-                    vg_metadata = vg_metadata.remove_columns(col)
+    vg_objects_file = vg_metadata_dir / "objects.json"
+    vg_relationships_file = vg_metadata_dir / "relationships.json"
+    vg_visual_verbs_file = (
+        vg_metadata_dir / "visual_verbnet_beta2015.json"
+    )
 
-            vg_metadata = vg_metadata.add_column(
-                "image_graphs",
-                [
-                    graphs[img_id]
-                    for img_id in vg_metadata[cfg.vg_image_id_col]
-                ],
-            )
-            vg_metadata = vg_metadata.add_column(
-                "action_image_graphs",
-                [
-                    action_graphs[img_id]
-                    for img_id in vg_metadata[cfg.vg_image_id_col]
-                ],
-            )
-            vg_metadata = vg_metadata.add_column(
-                "spatial_image_graphs",
-                [
-                    spatial_graphs[img_id]
-                    for img_id in vg_metadata[cfg.vg_image_id_col]
-                ],
-            )
+    graphs, action_graphs, spatial_graphs = derive_image_graphs(
+        vg_objects_file,
+        vg_relationships_file,
+        vg_visual_verbs_file,
+        cfg,
+        vg_complete[cfg.vg_without_coco_image_id_col],
+    )
 
-        vg_metadata = flatten_captions(
-            vg_metadata, caption_column=cfg.vg_captions_column
-        )
+    # Remove existing graph columns if present
+    for col in [
+        "image_graphs",
+        "action_image_graphs",
+        "spatial_image_graphs",
+    ]:
+        if col in vg_complete.column_names:
+            vg_complete = vg_complete.remove_columns(col)
 
-        vg_coco = load_dataset(
-            cfg.vg_coco_overlap_hf_identifier,
-            cache_dir=cfg.cache_dir,
-            split=cfg.vg_coco_split,
-        )
-        vg_coco = vg_coco.filter(
-            lambda x: [ex is not None for ex in x[cfg.vg_coco_column]],
-            batched=True,
-            num_proc=cfg.num_proc,
-        )
+    vg_complete = vg_complete.add_column(
+        "image_graphs",
+        [
+            graphs[img_id]
+            for img_id in vg_complete[cfg.vg_without_coco_image_id_col]
+        ],
+    )
+    vg_complete = vg_complete.add_column(
+        "action_image_graphs",
+        [
+            action_graphs[img_id]
+            for img_id in vg_complete[cfg.vg_without_coco_image_id_col]
+        ],
+    )
+    vg_complete = vg_complete.add_column(
+        "spatial_image_graphs",
+        [
+            spatial_graphs[img_id]
+            for img_id in vg_complete[cfg.vg_without_coco_image_id_col]
+        ],
+    )
 
-        overlapping_columns = set(vg_metadata.column_names) & set(
-            vg_coco.column_names
-        )
-        vg_coco = vg_coco.remove_columns(
-            [
-                col
-                for col in vg_coco.column_names
-                if col not in overlapping_columns
-            ]
-        )
-        vg_metadata = vg_metadata.remove_columns(
-            [
-                col
-                for col in vg_metadata.column_names
-                if col not in overlapping_columns
-            ]
-        )
+    vg_complete = vg_complete.shuffle(seed=cfg.seed)
+    vg_complete.save_to_disk(cfg.vg_processed_dir)
 
-        vg_complete = concatenate_datasets([vg_metadata, vg_coco]).shuffle(
-            seed=cfg.seed
-        )
-        vg_complete.save_to_disk(cfg.vg_processed_dir)
+    # Double check where it is pushing to
+    logger.info(
+        f"Pushing processed VG dataset to hub at {cfg.vg_processed_hf_identifier}"
+    )
+    # Make sure to push the processed dataset to the hub
+    vg_complete.push_to_hub(
+        cfg.vg_processed_hf_identifier,
+    )
 
 
 if __name__ == "__main__":

@@ -1,16 +1,16 @@
 seed: 42
-num_proc: 64
+num_proc: 32
 
-# --- Stage 1: Initial, Fast Preprocessing ---
-vg_metadata_dir: "/data/vg/vg_metadata"
-vg_metadata_hf_identifier: "helena-balabin/vg-without-coco-captions"
-vg_metadata_split: "train"
-vg_captions_column: "caption"
-vg_processed_dir: "/scratch/hbalabin/huggingface/datasets/vg-captions-graphs"
-vg_coco_overlap_hf_identifier: "helena-balabin/vg_actions_spatial_for_graphormer_with_text"
-vg_coco_split: "train"
-vg_coco_column: "coco_id"
 cache_dir: "/scratch/hbalabin/huggingface/datasets"
-vg_image_id_col: "image_id"
-include_image_graphs: True
-flatten_captions: True
+
+vg_metadata_dir: "/scratch/hbalabin/vg/vg_metadata"
+vg_without_coco_hf_identifier: "helena-balabin/vg-captions-graphs"
+vg_without_coco_split: "train"
+vg_without_coco_image_id_col: "image_id"
+
+vg_coco_overlap_hf_identifier: "helena-balabin/vg-coco-overlap"
+vg_coco_split: "train"
+vg_coco_column: "cocoid"
+
+vg_processed_dir: "/scratch/hbalabin/huggingface/datasets/vg-captions-graphs"
+vg_processed_hf_identifier: "helena-balabin/vg-captions-graphs"
