@@ -8,7 +8,7 @@ import torch.nn as nn
 from relationalstructureinclip.models.graph_clip_model.configuration_graph_clip import (
     GraphCLIPConfig,
 )
-from relationalstructureinclip.models.graph_clip_model.modeling_graphormer import (
+from relationalstructureinclip.models.graphormer.modeling_graphormer import (
     GraphormerForGraphCL,
 )
 from transformers import (

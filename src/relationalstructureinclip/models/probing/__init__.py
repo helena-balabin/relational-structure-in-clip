@@ -1,0 +1,1 @@
+"""Probing setup for relational structure in CLIP."""

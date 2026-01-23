@@ -8,10 +8,10 @@ import mlflow
 import torch
 from datasets import load_dataset
 from omegaconf import DictConfig
-from relationalstructureinclip.models.graph_clip_model.collating_graphormer import (
+from relationalstructureinclip.models.graphormer.collating_graphormer import (
     GraphormerAugmentedCollator,
 )
-from relationalstructureinclip.models.graph_clip_model.modeling_graphormer import (
+from relationalstructureinclip.models.graphormer.modeling_graphormer import (
     GraphormerForGraphCL,
 )
 from transformers import (

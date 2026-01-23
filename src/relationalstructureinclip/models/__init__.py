@@ -1,0 +1,1 @@
+"""Models module for relational structure in CLIP."""

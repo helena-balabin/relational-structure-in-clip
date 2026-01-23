@@ -1,0 +1,1 @@
+"""Data module for relational structure in CLIP."""
