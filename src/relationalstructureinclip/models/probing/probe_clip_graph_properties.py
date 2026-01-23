@@ -30,17 +30,18 @@ from himalaya.ridge import RidgeCV
 from himalaya.scoring import r2_score
 from omegaconf import DictConfig
 from PIL import Image
+from sklearn.linear_model import RidgeClassifierCV
+from sklearn.metrics import accuracy_score, f1_score
+from sklearn.model_selection import KFold, StratifiedKFold
+from tqdm import tqdm
+from transformers import AutoConfig, AutoModel, AutoProcessor
+
 from relationalstructureinclip.models.graph_clip_model.configuration_graph_clip import (
     GraphCLIPConfig,
 )
 from relationalstructureinclip.models.graph_clip_model.modeling_graph_clip import (
     GraphCLIPModel,
 )
-from sklearn.linear_model import RidgeClassifierCV
-from sklearn.metrics import accuracy_score, f1_score
-from sklearn.model_selection import KFold, StratifiedKFold
-from tqdm import tqdm
-from transformers import AutoConfig, AutoModel, AutoProcessor
 
 logger = logging.getLogger(__name__)
 

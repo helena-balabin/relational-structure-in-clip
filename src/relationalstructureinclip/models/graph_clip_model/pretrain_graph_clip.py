@@ -8,15 +8,6 @@ import mlflow
 import torch
 from datasets import load_dataset
 from omegaconf import DictConfig
-from relationalstructureinclip.models.graph_clip_model.collating_graph_clip import (
-    GraphCLIPCollator,
-)
-from relationalstructureinclip.models.graph_clip_model.configuration_graph_clip import (
-    GraphCLIPConfig,
-)
-from relationalstructureinclip.models.graph_clip_model.modeling_graph_clip import (
-    GraphCLIPModel,
-)
 from transformers import (
     CLIPProcessor,
     GraphormerConfig,
@@ -26,6 +17,16 @@ from transformers import (
 )
 from transformers.models.deprecated.graphormer.collating_graphormer import (
     GraphormerDataCollator,
+)
+
+from relationalstructureinclip.models.graph_clip_model.collating_graph_clip import (
+    GraphCLIPCollator,
+)
+from relationalstructureinclip.models.graph_clip_model.configuration_graph_clip import (
+    GraphCLIPConfig,
+)
+from relationalstructureinclip.models.graph_clip_model.modeling_graph_clip import (
+    GraphCLIPModel,
 )
 
 logging.basicConfig(level=logging.INFO)

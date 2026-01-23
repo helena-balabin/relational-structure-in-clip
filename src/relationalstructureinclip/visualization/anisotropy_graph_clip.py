@@ -12,7 +12,6 @@ from pathlib import Path
 
 import hydra
 import matplotlib.pyplot as plt
-import numpy as np
 import torch
 from datasets import load_dataset
 from hydra.core.config_store import ConfigStore
@@ -175,7 +174,8 @@ def main(cfg: AnisotropyVisualizationConfig) -> None:
         return
 
     logger.info(
-        f"Computed {graph_clip_embeddings.size(0)} Graph CLIP embeddings and {baseline_embeddings.size(0)} Baseline embeddings."
+        f"Computed {graph_clip_embeddings.size(0)} Graph "
+        f"CLIP embeddings and {baseline_embeddings.size(0)} Baseline embeddings."
     )
 
     # Combine embeddings for dimensionality reduction to ensure shared space

@@ -5,12 +5,6 @@ from typing import Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
-from relationalstructureinclip.models.graph_clip_model.configuration_graph_clip import (
-    GraphCLIPConfig,
-)
-from relationalstructureinclip.models.graphormer.modeling_graphormer import (
-    GraphormerForGraphCL,
-)
 from transformers import (
     CLIPModel,
     CLIPTextModel,
@@ -19,6 +13,13 @@ from transformers import (
 )
 from transformers.models.clip.modeling_clip import clip_loss
 from transformers.utils.generic import ModelOutput
+
+from relationalstructureinclip.models.graph_clip_model.configuration_graph_clip import (
+    GraphCLIPConfig,
+)
+from relationalstructureinclip.models.graphormer.modeling_graphormer import (
+    GraphormerForGraphCL,
+)
 
 
 @dataclass
