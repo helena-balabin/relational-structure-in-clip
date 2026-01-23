@@ -58,14 +58,23 @@ class GraphormerAugmentedCollator(GraphormerDataCollator):
             if ex["num_nodes"] < 2:
                 ex["num_nodes"] = 2
                 ex["edge_index"] = [[0, 1], [1, 0]]
+                ex["node_feat"] = (ex["node_feat"] + [[0]] * 2)[:2]
+                ex["edge_attr"] = [[0], [0]]
 
             edge_index = torch.as_tensor(ex["edge_index"], dtype=torch.long)
             if edge_index.numel() == 0:
                 edge_index = edge_index.view(2, 0)
 
-            # Use a minimal feature matrix when none is provided; augmentors expect an x tensor.
-            node_features = torch.ones((ex["num_nodes"], 1), dtype=torch.float32)
-            x_aug, edge_index_aug, _ = self.augmentor(node_features, edge_index)
+            # Prepare node features
+            node_features = torch.tensor(ex["node_feat"], dtype=torch.float32)
+            # Prepare edge attributes
+            edge_attr = torch.tensor(ex["edge_attr"], dtype=torch.float32)
+            # Augment the graph
+            x_aug, edge_index_aug, edge_attr_aug = self.augmentor(
+                node_features, edge_index, edge_attr
+            )
+            # Remove .long() cast to preserve continuous features
+            # Also clamp to avoid negative indices if strictly using Embedding layers (fallback safety)
             if isinstance(edge_index_aug, tuple):
                 edge_index_aug, _ = edge_index_aug
 
@@ -74,10 +83,24 @@ class GraphormerAugmentedCollator(GraphormerDataCollator):
             if aug_num_nodes < 2:
                 aug_num_nodes = 2
                 edge_index_aug = torch.tensor([[0, 1], [1, 0]], dtype=torch.long)
+                padding = torch.zeros(
+                    (2 - x_aug.size(0), x_aug.size(1)), dtype=x_aug.dtype
+                )
+                x_aug = torch.cat([x_aug, padding], dim=0)
+                edge_attr_aug = torch.zeros(
+                    (
+                        2,
+                        edge_attr_aug.size(1) if edge_attr_aug.dim() > 1 else 1
+                    ),
+                    dtype=edge_attr_aug.dtype,
+                )
 
             ex_aug = {}
             ex_aug["num_nodes"] = aug_num_nodes
             ex_aug["edge_index"] = edge_index_aug.cpu().tolist()
+            ex_aug["node_feat"] = x_aug.long().cpu().tolist()
+            ex_aug["edge_attr"] = edge_attr_aug.long().cpu().tolist()
+
             # Add dummy "label" key to avoid issues in the base collator
             ex["labels"] = [0]
             ex_aug["labels"] = [0]

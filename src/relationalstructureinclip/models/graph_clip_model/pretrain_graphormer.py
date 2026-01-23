@@ -108,21 +108,16 @@ def train_graphormer(cfg: DictConfig):
             # Do the same for nodes (max of flat edge_index)
             max_nodes = getattr(cfg.data, "max_nodes", 40)
             dataset = dataset.filter(
-                lambda example: max(
-                    example[target_graph_column]["edge_index"][0]
-                    + example[target_graph_column]["edge_index"][1]
-                ) < max_nodes
+                lambda example: example[target_graph_column]["num_nodes"] < max_nodes
             )
-            # And unpack the target graph column into only "edge_index" and "num_nodes"
+            # And unpack the target graph column
             def unpack_graph_column(example):
                 graph_data = example[target_graph_column]
-                edge_index = graph_data["edge_index"]
-                flat_nodes = edge_index[0] + edge_index[1]
-                num_nodes = max(flat_nodes) + 1 if flat_nodes else 0
-
                 return {
-                    "edge_index": edge_index,
-                    "num_nodes": num_nodes,
+                    "edge_index": graph_data["edge_index"],
+                    "num_nodes": graph_data["num_nodes"],
+                    "edge_attr": graph_data["edge_attr"],
+                    "node_feat": graph_data["node_feat"],
                 }
 
             # Drop all other columns; keep only edge_index/num_nodes for the collator
@@ -148,12 +143,16 @@ def train_graphormer(cfg: DictConfig):
                     hidden_size=512,
                     embedding_dim=512,
                     ffn_embedding_dim=512,
+                    num_atoms=100000,
+                    num_edges=100000,
                     num_hidden_layers=6,
                     dropout=cfg.model.dropout,
                 )
             else:
                 graphormer_config = GraphormerConfig(
                     dropout=cfg.model.dropout,
+                    num_atoms=100000,
+                    num_edges=100000,
                 )
 
             # Initialize the model and collator
