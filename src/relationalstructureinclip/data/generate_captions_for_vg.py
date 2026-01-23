@@ -71,7 +71,7 @@ def process_chunk(chunk, cfg, gpu_id):
     # Load model and processor once per GPU
     model = BlipForConditionalGeneration.from_pretrained(
         cfg.model_name, cache_dir=cfg.model_cache_dir
-    ).to(device)
+    ).to(device)  # type: ignore
     model.eval()
     processor = BlipProcessor.from_pretrained(
         cfg.model_name, cache_dir=cfg.model_cache_dir, use_fast=True

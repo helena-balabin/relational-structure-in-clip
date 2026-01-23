@@ -323,7 +323,7 @@ def prepare_visualization_data(
 
 def create_grouped_bar_plots(
     data: Dict[str, Dict[str, pd.DataFrame]], cfg: VisualizationConfig
-) -> plt.Figure:
+) -> plt.Figure:  # type: ignore
     """Create grouped bar plots for all metrics.
 
     Args:
@@ -465,7 +465,7 @@ def create_grouped_bar_plots(
             fontsize=cfg.legend_fontsize,
         )
 
-    fig.tight_layout(rect=[0, 0.1, 1, 0.96])
+    fig.tight_layout(rect=(0, 0.1, 1, 0.96))
 
     return fig
 
@@ -496,7 +496,7 @@ def main(cfg: DictConfig) -> None:  # pragma: no cover - thin wrapper
         from omegaconf import OmegaConf
 
         container = OmegaConf.to_container(cfg, resolve=True)
-        structured_cfg = VisualizationConfig(**container)
+        structured_cfg = VisualizationConfig(**container)  # type: ignore
 
     # Load and prepare data
     df = load_probe_results(structured_cfg.input_path)

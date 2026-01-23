@@ -7,7 +7,6 @@ from typing import Any, Dict
 from unittest.mock import patch
 
 import pandas as pd
-import pytest
 from datasets import Dataset
 
 from relationalstructureinclip.visualization.histogram_graph_properties import (
@@ -141,7 +140,7 @@ class TestExtractGraphProperties:
         df = _fake_dataset_with_graphs().to_pandas()
         cfg = HistogramVisualizationConfig()
 
-        properties_data = extract_graph_properties(df, cfg)
+        properties_data = extract_graph_properties(df, cfg)  # type: ignore
 
         # Check that all graph types are processed
         expected_graph_types = cfg.text_graph_columns + cfg.image_graph_columns

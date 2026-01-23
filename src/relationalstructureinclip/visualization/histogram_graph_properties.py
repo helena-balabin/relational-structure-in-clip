@@ -149,7 +149,7 @@ def load_dataset_with_properties(
         cache_dir=str(cache_dir),
     )
 
-    df = dataset.to_pandas()
+    df = pd.DataFrame(dataset.to_pandas())  # type: ignore
     logger.info(
         "Loaded dataset with %d rows and %d columns", len(df), len(df.columns)
     )
@@ -228,7 +228,7 @@ def extract_graph_properties(
 
 def create_histogram_subplots(
     properties_data: Dict[str, pd.DataFrame], cfg: HistogramVisualizationConfig
-) -> plt.Figure:
+) -> plt.Figure:  # type: ignore
     """Create histogram subplots for all graph types and properties.
 
     Args:
@@ -351,7 +351,7 @@ def create_histogram_subplots(
             # For depth histograms, set integer ticks
             if prop == "depth" and len(prop_data) > 0:
                 max_depth_shown = min(
-                    int(prop_data.max()), 20
+                    int(prop_data.max()), 20  # type: ignore
                 )  # Cap at 20 for readability
                 ax.set_xticks(range(max_depth_shown + 1))
 
@@ -393,7 +393,7 @@ def main(cfg: DictConfig) -> None:  # pragma: no cover - thin wrapper
         from omegaconf import OmegaConf
 
         container = OmegaConf.to_container(cfg, resolve=True)
-        structured_cfg = HistogramVisualizationConfig(**container)
+        structured_cfg = HistogramVisualizationConfig(**container)  # type: ignore
 
     # Load dataset and extract properties
     df = load_dataset_with_properties(structured_cfg)

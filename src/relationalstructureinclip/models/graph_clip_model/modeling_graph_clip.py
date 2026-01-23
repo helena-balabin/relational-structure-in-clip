@@ -205,9 +205,9 @@ class GraphCLIPModel(CLIPModel):
             return ((loss,) + output) if loss is not None else output
 
         return GraphCLIPOutput(
-            loss=loss,
-            loss_graph_pair=loss_graph_pair,
-            loss_image_text=loss_image_text,
+            loss=loss,  # type: ignore
+            loss_graph_pair=loss_graph_pair,  # type: ignore
+            loss_image_text=loss_image_text,  # type: ignore
         )
 
     def freeze_layers(

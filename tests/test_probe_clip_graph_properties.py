@@ -196,7 +196,7 @@ class TestProbeTrainer:
 
         # Verify we get a valid R² score
         assert "r2" in result
-        r2_value = result["r2"].item()
+        r2_value = result["r2"].item() if isinstance(result["r2"], torch.Tensor) else result["r2"]
 
         assert isinstance(r2_value, (float, np.floating))
         # R² can be negative for poor fits with random data, so just check it's a number

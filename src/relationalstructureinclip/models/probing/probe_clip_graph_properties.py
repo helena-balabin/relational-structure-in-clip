@@ -100,7 +100,7 @@ class ProbeTrainer:
         # Use RidgeCV which performs internal cross-validation
         model = RidgeCV(
             alphas=self.alphas,
-            cv=KFold(n_splits=self.cv_folds, shuffle=False),
+            cv=KFold(n_splits=self.cv_folds, shuffle=False),  # type: ignore
             solver_params={
                 "score_func": r2_score,
                 "n_alphas_batch": 1,
@@ -130,7 +130,7 @@ class ProbeTrainer:
             majority_pred = np.full_like(y_val, y_train[0])
             accuracy = accuracy_score(y_val, majority_pred)
             f1 = f1_score(y_val, majority_pred)
-            return {"accuracy": accuracy, "f1": f1}
+            return {"accuracy": float(accuracy), "f1": float(f1)}
 
         # Use RidgeClassifierCV which performs internal cross-validation
         model = RidgeClassifierCV(
@@ -147,7 +147,7 @@ class ProbeTrainer:
         accuracy = accuracy_score(y_val, y_pred)
         f1 = f1_score(y_val, y_pred)
 
-        return {"accuracy": accuracy, "f1": f1}
+        return {"accuracy": float(accuracy), "f1": float(f1)}
 
 
 class DataSplitter:
@@ -181,19 +181,15 @@ class ProbingTask:
                 df[graph_col]
                 .apply(lambda g: _get_graph_metric(g, "num_nodes"))
                 .values
-            )
+            )  # type: ignore
         elif self.target == "num_edges":
             return (
-                df[graph_col]
-                .apply(lambda g: _get_graph_metric(g, "num_edges"))
-                .values
-            )
+                df[graph_col].apply(lambda g: _get_graph_metric(g, "num_edges")).values
+            )  # type: ignore
         elif self.target == "depth":
             return (
-                df[graph_col]
-                .apply(lambda g: _get_graph_metric(g, "depth"))
-                .values.astype(np.float32)
-            )
+                df[graph_col].apply(lambda g: _get_graph_metric(g, "depth")).values.astype(np.float32)
+            )  # type: ignore
         else:
             raise ValueError(f"Unknown target: {self.target}")
 
@@ -297,7 +293,7 @@ def _compute_clip_embeddings(
             # Use autocast for mixed-precision inference if on CUDA
             with (
                 torch.no_grad(),
-                torch.amp.autocast(
+                torch.amp.autocast(  # type: ignore
                     device_type="cuda" if torch.cuda.is_available() else "cpu"
                 ),
             ):
@@ -434,15 +430,15 @@ def _process_graph_columns(
             # Log label statistics
             mlflow.log_metrics(
                 {
-                    f"{graph_col}_{task.target}_mean": np.mean(
+                    f"{graph_col}_{task.target}_mean": float(np.mean(
                         filtered_labels
-                    ),
-                    f"{graph_col}_{task.target}_std": np.std(filtered_labels),
-                    f"{graph_col}_{task.target}_min": np.min(filtered_labels),
-                    f"{graph_col}_{task.target}_max": np.max(filtered_labels),
-                    f"{graph_col}_{task.target}_n_samples": len(
+                    )),
+                    f"{graph_col}_{task.target}_std": float(np.std(filtered_labels)),
+                    f"{graph_col}_{task.target}_min": float(np.min(filtered_labels)),
+                    f"{graph_col}_{task.target}_max": float(np.max(filtered_labels)),
+                    f"{graph_col}_{task.target}_n_samples": float(len(
                         filtered_labels
-                    ),
+                    )),
                     f"{graph_col}_{task.target}_n_filtered": len(labels)
                     - len(filtered_labels),
                 }
@@ -679,10 +675,10 @@ def main(cfg: DictConfig):
 
                     if all_scores:
                         mlflow.log_metric(
-                            "avg_performance", np.mean(all_scores)
+                            "avg_performance", float(np.mean(all_scores))
                         )
                         mlflow.log_metric(
-                            "performance_std", np.std(all_scores)
+                            "performance_std", float(np.std(all_scores))
                         )
 
         # Create structured DataFrame

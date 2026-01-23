@@ -133,7 +133,7 @@ def main(cfg: AnisotropyVisualizationConfig) -> None:
     try:
         model = GraphCLIPModel.from_pretrained(cfg.model_hf_identifier)
         model.eval()
-        model.to(device)
+        model.to(device)  # type: ignore
     except Exception as e:
         logger.warning(
             f"Failed to load model directly: {e}. Please ensure the model identifier is correct."
@@ -145,7 +145,7 @@ def main(cfg: AnisotropyVisualizationConfig) -> None:
     try:
         baseline_model = CLIPModel.from_pretrained(cfg.baseline_model_hf_identifier)
         baseline_model.eval()
-        baseline_model.to(device)
+        baseline_model.to(device)  # type: ignore
     except Exception as e:
         logger.warning(f"Failed to load baseline model: {e}")
         raise e
@@ -211,7 +211,7 @@ def main(cfg: AnisotropyVisualizationConfig) -> None:
     ax.scatter(
         reduced_graph_clip[:, 0],
         reduced_graph_clip[:, 1],
-        reduced_graph_clip[:, 2],
+        reduced_graph_clip[:, 2],  # type: ignore
         c=cfg.plot_color,
         alpha=0.6,
         s=10,
@@ -222,7 +222,7 @@ def main(cfg: AnisotropyVisualizationConfig) -> None:
     ax.scatter(
         reduced_baseline[:, 0],
         reduced_baseline[:, 1],
-        reduced_baseline[:, 2],
+        reduced_baseline[:, 2],  # type: ignore
         c="blue",  # Different color for baseline
         alpha=0.3,
         s=10,
@@ -230,7 +230,7 @@ def main(cfg: AnisotropyVisualizationConfig) -> None:
     )
 
     # Plot origin
-    ax.scatter([0], [0], [0], color="red", marker="x", s=100, label="Origin")
+    ax.scatter([0], [0], [0], color="red", marker="x", s=100, label="Origin")  # type: ignore
 
     ax.set_title(cfg.plot_title)
     ax.set_xlabel(cfg.plot_xlabel)

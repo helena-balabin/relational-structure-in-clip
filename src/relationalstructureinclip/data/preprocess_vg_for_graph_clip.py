@@ -20,9 +20,9 @@ logger = logging.getLogger(__name__)
 
 
 def derive_image_graphs(
-    vg_objects_file: str,
-    vg_relationships_file: str,
-    vg_visual_verbs_file: str,
+    vg_objects_file: Path,
+    vg_relationships_file: Path,
+    vg_visual_verbs_file: Path,
     cfg: DictConfig,
     image_ids: Optional[List[str]] = None,
 ):
@@ -67,7 +67,10 @@ def derive_image_graphs(
     node_vocab = {"obj.unknown": 0}
     edge_vocab = {"rel.unknown": 0}
 
-    for obj, rel in zip(vg_objects, vg_relationships):
+    obj: Dict[str, Any]
+    rel: Dict[str, Any]
+
+    for obj, rel in zip(vg_objects, vg_relationships):  # type: ignore
         image_id = obj["image_id"]
         graph = nx.DiGraph()
 

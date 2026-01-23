@@ -31,7 +31,7 @@ class GraphCLIPCollator:
         self.graph_collator = graph_collator
         self.image_dir = image_dir
 
-    def __call__(self, examples: List[Dict]) -> Dict[str, torch.Tensor]:
+    def __call__(self, examples: List[Dict]) -> Dict[str, Dict[str, torch.Tensor]]:
         """Collate a batch of examples."""
         # Separate graph inputs
         graph_inputs = [ex["graph_input"] for ex in examples]
@@ -73,9 +73,9 @@ class GraphCLIPCollator:
         inputs = self.processor(
             text=texts,
             images=images,
-            return_tensors="pt",
-            padding=True,
-            truncation=True,
+            return_tensors="pt",  # type: ignore
+            padding=True,  # type: ignore
+            truncation=True,  # type: ignore
         )
         batch["pixel_values"] = inputs["pixel_values"]
         batch["input_ids"] = inputs["input_ids"]

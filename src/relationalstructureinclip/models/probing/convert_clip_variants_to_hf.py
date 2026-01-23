@@ -378,7 +378,7 @@ def convert_hycoclip_to_hf(
 
     # Optionally push to Hugging Face Hub
     if cfg.push_to_hub and cfg.hf_hyco_clip_model_identifier:
-        hf_clip_model.push_to_hub(cfg.hf_hyco_clip_model_identifier)
+        hf_clip_model.push_to_hub(cfg.hf_hyco_clip_model_identifier)  # type: ignore
         hf_clip_processor.push_to_hub(cfg.hf_hyco_clip_model_identifier)
         logger.info(
             f"Pushed HyCoCLIP model to Hugging Face Hub at {cfg.hf_hyco_clip_model_identifier}"
@@ -439,7 +439,7 @@ def convert_tripletclip_to_hf(
 
     # Optionally push to Hugging Face Hub
     if cfg.push_to_hub and cfg.hf_triplet_clip_model_identifier:
-        hf_clip_model.push_to_hub(cfg.hf_triplet_clip_model_identifier)
+        hf_clip_model.push_to_hub(cfg.hf_triplet_clip_model_identifier)  # type: ignore
         hf_clip_processor.push_to_hub(cfg.hf_triplet_clip_model_identifier)
         logger.info(
             f"Pushed TripletCLIP model to Hugging Face Hub at {cfg.hf_triplet_clip_model_identifier}"
@@ -485,7 +485,7 @@ def convert_laclip_to_hf(
     logger.info(f"Converted LaCLIP model saved to {output_dir}")
 
     if cfg.push_to_hub and cfg.hf_la_clip_model_identifier:
-        hf_clip_model.push_to_hub(cfg.hf_la_clip_model_identifier)
+        hf_clip_model.push_to_hub(cfg.hf_la_clip_model_identifier)  # type: ignore
         hf_clip_processor.push_to_hub(cfg.hf_la_clip_model_identifier)
         logger.info(
             f"Pushed LaCLIP model to Hugging Face Hub at {cfg.hf_la_clip_model_identifier}"
@@ -502,7 +502,7 @@ def main(cfg: DictConfig) -> None:
     """Main entry point for conversion script."""
 
     # Populate the ConvertConfig dataclass from the DictConfig
-    convert_config = ConvertConfig(**OmegaConf.to_container(cfg, resolve=True))
+    convert_config = ConvertConfig(**OmegaConf.to_container(cfg, resolve=True))  # type: ignore
     OmegaConf.set_struct(cfg, False)
 
     # 1. Convert HyCo
