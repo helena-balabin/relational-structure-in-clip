@@ -209,20 +209,6 @@ def train_graph_image_model(cfg: DictConfig):
             dataset = dataset.filter(
                 lambda example: example["coco_id"] is not None
             )
-            # Re-calculate the number of nodes from graph_input edge_index
-            dataset = dataset.map(
-                lambda example: {
-                    "graph_input": {
-                        **example["graph_input"],
-                        "num_nodes":  # Flatten the 2 x n edge_index to find max node index
-                        int(
-                            max(example["graph_input"]["edge_index"][0] + example["graph_input"]["edge_index"][1])
-                            + 1
-                        ),
-                    }
-                },
-                batched=False,
-            )
 
             # Drop single-node graphs (often self-loops only) that break Graphormer preprocessing
             dataset = dataset.filter(
@@ -265,12 +251,16 @@ def train_graph_image_model(cfg: DictConfig):
                     hidden_size=512,
                     embedding_dim=512,
                     ffn_embedding_dim=512,
+                    num_atoms=100000,
+                    num_edges=100000,
                     num_hidden_layers=6,
                     dropout=cfg.model.dropout,
                 )
             else:
                 graphormer_config = GraphormerConfig(
                     dropout=cfg.model.dropout,
+                    num_atoms=100000,
+                    num_edges=100000,
                 )
 
             # Get the pretrained Graphormer hub ID if specified
