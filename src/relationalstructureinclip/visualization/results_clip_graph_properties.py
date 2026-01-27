@@ -60,11 +60,11 @@ class VisualizationConfig:
     show_plot: bool = False
 
     # Plot appearance
-    figure_size: List[float] = field(default_factory=lambda: [15, 5])
-    title_fontsize: int = 14
-    axis_label_fontsize: int = 12
-    tick_label_fontsize: int = 10
-    legend_fontsize: int = 10
+    figure_size: List[float] = field(default_factory=lambda: [18, 6])
+    title_fontsize: int = 16
+    axis_label_fontsize: int = 16
+    tick_label_fontsize: int = 16
+    legend_fontsize: int = 16
     # Optional: larger y-axis tick labels than x-axis
     y_tick_label_fontsize: Optional[int] = None
 
@@ -146,7 +146,7 @@ class VisualizationConfig:
             "#17becf",
         ]
     )
-    bar_width: float = 0.15
+    bar_width: float = 0.1
     alpha: float = 0.8
     error_bars: bool = True
 
@@ -465,7 +465,7 @@ def create_grouped_bar_plots(
             fontsize=cfg.legend_fontsize,
         )
 
-    fig.tight_layout(rect=(0, 0.18, 1, 0.96))
+    fig.tight_layout(rect=(0, 0.1, 1, 0.96))
 
     return fig
 
