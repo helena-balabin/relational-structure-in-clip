@@ -460,12 +460,12 @@ def create_grouped_bar_plots(
             handles,
             labels,
             loc="lower center",
-            bbox_to_anchor=(0.5, -0.1),
-            ncol=len(labels),
+            bbox_to_anchor=(0.5, 0.02),
+            ncol=(len(labels) + 1) // 2,
             fontsize=cfg.legend_fontsize,
         )
 
-    fig.tight_layout(rect=(0, 0.1, 1, 0.96))
+    fig.tight_layout(rect=(0, 0.18, 1, 0.96))
 
     return fig
 
