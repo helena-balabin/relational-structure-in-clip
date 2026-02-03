@@ -61,10 +61,10 @@ class VisualizationConfig:
 
     # Plot appearance
     figure_size: List[float] = field(default_factory=lambda: [18, 6])
-    title_fontsize: int = 16
-    axis_label_fontsize: int = 16
-    tick_label_fontsize: int = 16
-    legend_fontsize: int = 16
+    title_fontsize: int = 20
+    axis_label_fontsize: int = 18
+    tick_label_fontsize: int = 18
+    legend_fontsize: int = 18
     # Optional: larger y-axis tick labels than x-axis
     y_tick_label_fontsize: Optional[int] = None
 
@@ -259,6 +259,17 @@ def prepare_visualization_data(
                 values=column,
                 aggfunc="mean",
             )
+
+            # Reorder model columns: GraphCLIP variants (left), Others (middle), CLIP (right)
+            cols = mean_pivot_df.columns.tolist()
+            graph_clip_cols = sorted([c for c in cols if "graph-clip" in c])
+            clip_cols = [c for c in cols if "openai/clip" in c]
+            other_cols = sorted(
+                [c for c in cols if c not in graph_clip_cols and c not in clip_cols]
+            )
+            new_col_order = graph_clip_cols + other_cols + clip_cols
+            mean_pivot_df = mean_pivot_df.reindex(columns=new_col_order)
+
             metric_data: Dict[str, Any] = {
                 "mean": mean_pivot_df,
                 "cfg": metric_cfg,
@@ -277,6 +288,16 @@ def prepare_visualization_data(
             values=column,
             aggfunc="mean",  # In case of duplicates
         )
+
+        # Reorder model columns: GraphCLIP variants (left), Others (middle), CLIP (right)
+        cols = mean_pivot_df.columns.tolist()
+        graph_clip_cols = sorted([c for c in cols if "graph-clip" in c])
+        clip_cols = [c for c in cols if "openai/clip" in c]
+        other_cols = sorted(
+            [c for c in cols if c not in graph_clip_cols and c not in clip_cols]
+        )
+        new_col_order = graph_clip_cols + other_cols + clip_cols
+        mean_pivot_df = mean_pivot_df.reindex(columns=new_col_order)
 
         # Reorder rows according to cfg.graph_types
         available_graph_types = [
@@ -298,6 +319,9 @@ def prepare_visualization_data(
                 values=std_column,
                 aggfunc="mean",  # In case of duplicates
             )
+
+            # Reorder columns to match mean data
+            std_pivot_df = std_pivot_df.reindex(columns=new_col_order)
 
             # Reorder rows to match mean data
             if available_graph_types:
@@ -377,11 +401,29 @@ def create_grouped_bar_plots(
         x_pos = np.arange(n_graph_types)
         bar_width = cfg.bar_width
 
+        # Subtle palette for "other" models
+        subtle_palette = ["#669ade", "#8dd3c7", "#bebada", "#aad3ef", "#9887c0"]
+        other_model_idx = 0
+
         # Plot bars for each model
         for j, model in enumerate(mean_df.columns):
             values = mean_df[model].values
             offset = (j - (n_models - 1) / 2) * bar_width
-            color = cfg.color_palette[j % len(cfg.color_palette)]
+
+            # Determine color based on model type
+            if "openai/clip" in model:
+                color = "#A4A4A4"
+            elif "graph-clip" in model:
+                if "action-image" in model:
+                    color = "#B94141"  # Darkest red
+                elif "spatial-image" in model:
+                    color = "#d25a5a"  # Lightest red
+                else:
+                    color = "#f18585"  # Medium red
+            else:
+                color = subtle_palette[other_model_idx % len(subtle_palette)]
+                other_model_idx += 1
+
             # shorten legend label: keep part after "/"
             short_label = model.split("/", 1)[-1] if "/" in model else model
 
@@ -465,7 +507,7 @@ def create_grouped_bar_plots(
             fontsize=cfg.legend_fontsize,
         )
 
-    fig.tight_layout(rect=(0, 0.1, 1, 0.96))
+    fig.tight_layout(rect=(0, 0.15, 1, 0.96))
 
     return fig
 
