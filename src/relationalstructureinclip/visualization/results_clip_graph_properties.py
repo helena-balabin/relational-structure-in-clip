@@ -415,17 +415,25 @@ def create_grouped_bar_plots(
                 color = "#A4A4A4"
             elif "graph-clip" in model:
                 if "action-image" in model:
-                    color = "#B94141"  # Darkest red
+                    color = "#701C1C"  # Darkest red
                 elif "spatial-image" in model:
-                    color = "#d25a5a"  # Lightest red
+                    color = "#eb4444"  # Lightest red
                 else:
-                    color = "#f18585"  # Medium red
+                    color = "#f69999"  # Medium red
             else:
                 color = subtle_palette[other_model_idx % len(subtle_palette)]
                 other_model_idx += 1
 
             # shorten legend label: keep part after "/"
             short_label = model.split("/", 1)[-1] if "/" in model else model
+
+            # Apply specific legend label overrides
+            label_replacements = {
+                "graph-clip-action-image": "graph-clip-action",
+                "graph-clip-spatial-image": "graph-clip-spatial",
+                "graph-clip-image": "graph-clip-complete",
+            }
+            short_label = label_replacements.get(short_label, short_label)
 
             # Get error values if available
             yerr = None
@@ -603,6 +611,13 @@ def main(cfg: DictConfig) -> None:  # pragma: no cover - thin wrapper
                     "graph_types": subset_types,
                 }
             )
+
+            # For image-based figure, replace "Image" with "Complete"
+            if subset_name == "image":
+                new_labels = dict(sub_cfg.graph_type_labels)
+                new_labels["image_graphs"] = "Complete"
+                sub_cfg.graph_type_labels = new_labels
+
             prepared_subset = prepare_visualization_data(df_subset, sub_cfg)
             if not prepared_subset:
                 logger.warning(
